@@ -1,0 +1,33 @@
+# YOLO Detection Configuration
+
+# Model settings
+model_path: "best.pt"  # Path to your trained YOLOv8 model
+device: "cpu"  # "cpu" or "cuda" for GPU acceleration
+
+# Detection thresholds
+confidence_threshold: 0.5  # Minimum confidence for detections
+iou_threshold: 0.4  # IoU threshold for Non-Maximum Suppression
+
+# Topics
+input_topic: "/camera/color/image_raw"
+output_topic: "/yolov8/image"
+camera_info_topic: "/camera/color/camera_info"
+
+# Image processing
+image_width: 640
+image_height: 480
+
+# Visualization settings
+draw_boxes: true
+draw_masks: true
+draw_labels: true
+line_thickness: 2
+font_scale: 0.6
+
+# Class filtering (optional)
+# If you want to detect only specific classes, list their IDs here
+# enabled_classes: [0, 1, 2]  # Only detect persons, bicycles, cars
+enabled_classes: []  # Empty list means detect all classes
+
+# Performance settings
+max_detections: 100  # Maximum number of detections per image
