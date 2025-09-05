@@ -8,6 +8,7 @@
 #include <trajectory_msgs/msg/joint_trajectory.hpp>
 #include <std_msgs/msg/header.hpp>
 #include <std_srvs/srv/trigger.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <memory>
 #include <mutex>
 #include <atomic>
