@@ -25,7 +25,7 @@ class YOLODetectorNode(Node):
         self.declare_parameter('camera_info_topic', '/camera/color/camera_info')
         self.declare_parameter('image_width', 640)
         self.declare_parameter('image_height', 480)
-        self.declare_parameter('device', 'cpu')  # 'cpu' or 'cuda'
+        self.declare_parameter('device', 'cuda')  # 'cpu' or 'cuda'
         
         # 获取参数值
         self.model_path = self.get_parameter('model_path').get_parameter_value().string_value
