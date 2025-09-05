@@ -1,0 +1,35 @@
+seed_robot_driver:
+  ros__parameters:
+    # 串口配置
+    serial_port: "/dev/ttyUSB0"
+    baudrate: 115200
+    auto_connect: true
+    
+    # 状态发布频率
+    status_publish_rate: 50.0  # Hz
+    
+    # 运动限制
+    max_joint_velocity: 30.0      # 度/秒
+    max_cartesian_velocity: 1000.0 # mm/分钟
+    
+    # 工作空间限制 (毫米)
+    workspace_min_x: -500.0
+    workspace_min_y: -500.0
+    workspace_min_z: 0.0
+    workspace_max_x: 500.0
+    workspace_max_y: 500.0
+    workspace_max_z: 800.0
+    
+    # 关节角度限制 (度)
+    joint_min_angles: [-150.0, -65.0, -188.0, -167.0, -34.0, -270.0]
+    joint_max_angles: [150.0, 110.0, 27.0, 167.0, 208.0, 270.0]
+    
+    # 安全设置
+    enable_workspace_check: true
+    enable_joint_limit_check: true
+    emergency_stop_timeout: 5.0   # 秒
+    
+    # 调试选项
+    debug_mode: false
+    log_serial_commands: false
+    log_status_packets: false
