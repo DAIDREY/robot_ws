@@ -7,6 +7,7 @@ from std_msgs.msg import Header
 from cv_bridge import CvBridge
 import cv2
 import numpy as np
+import time
 
 class YOLODetectorNode(Node):
     """增强版YOLO检测节点"""
@@ -14,15 +15,19 @@ class YOLODetectorNode(Node):
     def __init__(self):
         super().__init__('yolo_detector')
         
-        # 逐个声明参数 - 修复参数声明方法
+        # 初始化日志时间戳
+        self._last_log_time = 0
+        self._last_info_time = 0
+        
+        # 逐个声明参数
         self.declare_parameter('model_path', 'yolov8n-seg.pt')
         self.declare_parameter('confidence_threshold', 0.5)
         self.declare_parameter('iou_threshold', 0.4)
         self.declare_parameter('device', 'cpu')
         
         # 输入输出话题
-        self.declare_parameter('input_topic', '/camera/image_raw')
-        self.declare_parameter('camera_info_topic', '/camera/camera_info')
+        self.declare_parameter('input_topic', '/camera/color/image_raw')
+        self.declare_parameter('camera_info_topic', '/camera/color/camera_info')
         self.declare_parameter('output_detection_topic', '/yolo/detection_result')
         self.declare_parameter('output_mask_topic', '/yolo/mask')
         self.declare_parameter('output_combined_topic', '/yolo/combined_result')
@@ -30,7 +35,7 @@ class YOLODetectorNode(Node):
         # 分割相关参数
         self.declare_parameter('enable_segmentation', True)
         self.declare_parameter('mask_threshold', 0.5)
-        self.declare_parameter('target_classes', '')  # 空字符串表示所有类别
+        self.declare_parameter('target_classes', '')
         self.declare_parameter('publish_individual_masks', False)
         
         # 图像参数
@@ -60,6 +65,13 @@ class YOLODetectorNode(Node):
         self.colors = self.generate_colors(80)
         
         self.log_initialization_info()
+    
+    def throttled_log_info(self, message, throttle_sec=2.0):
+        """节流日志信息"""
+        current_time = time.time()
+        if current_time - self._last_info_time > throttle_sec:
+            self.get_logger().info(message)
+            self._last_info_time = current_time
     
     def load_parameters(self):
         """获取参数值"""
@@ -96,10 +108,9 @@ class YOLODetectorNode(Node):
     def load_model(self):
         """加载YOLO模型"""
         try:
-            # 尝试导入ultralytics
             from ultralytics import YOLO
             
-            self.get_logger().info(f'Loading YOLO model: {self.model_path}')
+            self.get_logger().info(f'🤖 Loading YOLO model: {self.model_path}')
             self.model = YOLO(self.model_path)
             
             # 检查设备
@@ -108,22 +119,23 @@ class YOLODetectorNode(Node):
                     import torch
                     if torch.cuda.is_available():
                         self.model.to('cuda')
-                        self.get_logger().info('Using CUDA device')
+                        self.get_logger().info('✅ Using CUDA device')
                     else:
-                        self.get_logger().warn('CUDA not available, using CPU')
+                        self.get_logger().warn('⚠️ CUDA not available, using CPU')
                         self.device = 'cpu'
                 except:
-                    self.get_logger().warn('PyTorch not available, using CPU')
+                    self.get_logger().warn('⚠️ PyTorch not available, using CPU')
                     self.device = 'cpu'
             
-            self.get_logger().info(f'Model loaded successfully on device: {self.device}')
+            self.get_logger().info(f'✅ Model loaded successfully on device: {self.device}')
+            self.get_logger().info(f'📋 Model classes: {self.model.names}')
             self.model_loaded = True
             
         except ImportError:
-            self.get_logger().error('ultralytics not installed. Using simple thresholding as fallback.')
+            self.get_logger().error('❌ ultralytics not installed. Using simple fallback.')
             self.model_loaded = False
         except Exception as e:
-            self.get_logger().error(f'Failed to load YOLO model: {str(e)}. Using fallback.')
+            self.get_logger().error(f'❌ Failed to load YOLO model: {str(e)}. Using fallback.')
             self.model_loaded = False
     
     def setup_topics(self):
@@ -145,6 +157,11 @@ class YOLODetectorNode(Node):
                 
             self.combined_result_pub = self.create_publisher(
                 Image, self.output_combined_topic, 10)
+        
+        self.get_logger().info(f'📡 Subscribed to: {self.input_topic}')
+        self.get_logger().info(f'📤 Publishing detection to: {self.output_detection_topic}')
+        if self.enable_segmentation:
+            self.get_logger().info(f'📤 Publishing mask to: {self.output_mask_topic}')
     
     def generate_colors(self, num_classes):
         """生成用于可视化的随机颜色"""
@@ -162,6 +179,9 @@ class YOLODetectorNode(Node):
     def image_callback(self, msg):
         """图像消息回调函数"""
         try:
+            # 调试信息
+            self.throttled_log_info(f'📷 Received image: {msg.width}x{msg.height}')
+            
             # 将ROS图像消息转换为OpenCV格式
             cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
             
@@ -183,7 +203,7 @@ class YOLODetectorNode(Node):
                 else:
                     combined_mask, combined_image = None, detection_image
             else:
-                # 使用简单的阈值分割作为fallback
+                # 使用简单的fallback处理
                 detection_image, combined_mask, combined_image = self.simple_fallback_processing(cv_image)
             
             # 发布检测结果
@@ -203,18 +223,26 @@ class YOLODetectorNode(Node):
                     self.combined_result_pub.publish(combined_msg)
             
         except Exception as e:
-            self.get_logger().error(f'Error processing image: {str(e)}')
+            self.get_logger().error(f'❌ Error processing image: {str(e)}')
     
     def simple_fallback_processing(self, image):
-        """简单的fallback处理，当YOLO模型不可用时使用"""
-        # 创建简单的阈值mask
+        """简单的fallback处理"""
+        # 创建基于阈值的简单mask
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         _, mask = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY)
         
-        # 在图像上绘制一些信息
+        # 确保有一些mask区域
+        if np.sum(mask) == 0:
+            h, w = image.shape[:2]
+            mask = np.zeros((h, w), dtype=np.uint8)
+            cv2.rectangle(mask, (w//4, h//4), (3*w//4, 3*h//4), 255, -1)
+        
         annotated = image.copy()
-        cv2.putText(annotated, 'Fallback Mode (No YOLO)', (10, 30), 
+        cv2.putText(annotated, 'Fallback Mode', (10, 30), 
                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        
+        mask_pixels = np.sum(mask > 0)
+        self.throttled_log_info(f'🔄 Fallback: Generated mask with {mask_pixels} pixels')
         
         return annotated, mask, annotated
     
@@ -223,11 +251,14 @@ class YOLODetectorNode(Node):
         annotated_image = image.copy()
         
         if not hasattr(results, 'boxes') or results.boxes is None:
+            self.throttled_log_info('⚠️ No detection boxes found')
             return annotated_image
             
         boxes = results.boxes.xyxy.cpu().numpy()
         scores = results.boxes.conf.cpu().numpy()
         classes = results.boxes.cls.cpu().numpy().astype(int)
+        
+        self.throttled_log_info(f'🎯 Original detections: {len(boxes)} boxes, scores: {scores.min():.3f}-{scores.max():.3f}')
         
         # 过滤目标类别
         if self.target_classes:
@@ -235,6 +266,7 @@ class YOLODetectorNode(Node):
             boxes = boxes[valid_indices]
             scores = scores[valid_indices]
             classes = classes[valid_indices]
+            self.throttled_log_info(f'🎯 After class filtering: {len(boxes)} boxes')
         
         # 绘制边界框
         for i, (box, score, cls) in enumerate(zip(boxes, scores, classes)):
@@ -264,6 +296,7 @@ class YOLODetectorNode(Node):
         annotated_image = image.copy()
         
         if not hasattr(results, 'masks') or results.masks is None:
+            self.throttled_log_info('⚠️ No segmentation masks found')
             return None, annotated_image
         
         masks = results.masks.data.cpu().numpy()
@@ -272,7 +305,10 @@ class YOLODetectorNode(Node):
         classes = results.boxes.cls.cpu().numpy().astype(int) if results.boxes is not None else None
         
         if classes is None:
+            self.throttled_log_info('⚠️ No class information for masks')
             return None, annotated_image
+        
+        self.throttled_log_info(f'🎭 Processing {len(masks)} masks')
         
         valid_mask_count = 0
         
@@ -287,9 +323,19 @@ class YOLODetectorNode(Node):
             if self.target_classes and cls not in self.target_classes:
                 continue
             
+            # 获取类别名称
+            class_name = f'Class_{cls}'
+            if hasattr(self.model, 'names'):
+                class_name = self.model.names.get(cls, f'Class_{cls}')
+            
             # 调整mask尺寸
             mask_resized = cv2.resize(mask, (width, height))
             mask_binary = (mask_resized > self.mask_threshold).astype(np.uint8) * 255
+            
+            # 检查mask是否有效
+            mask_pixels = np.sum(mask_binary > 0)
+            if mask_pixels == 0:
+                continue
             
             # 合并到总mask中
             combined_mask = cv2.bitwise_or(combined_mask, mask_binary)
@@ -304,9 +350,11 @@ class YOLODetectorNode(Node):
             annotated_image = cv2.addWeighted(annotated_image, 0.7, colored_mask, 0.3, 0)
         
         if valid_mask_count > 0:
-            self.get_logger().info_throttle(2.0, f'Generated mask with {valid_mask_count} objects')
+            total_mask_pixels = np.sum(combined_mask > 0)
+            self.throttled_log_info(f'✅ Generated final mask: {valid_mask_count} objects, {total_mask_pixels} pixels')
             return combined_mask, annotated_image
         else:
+            self.throttled_log_info('⚠️ No valid masks generated')
             return None, annotated_image
     
     def draw_label(self, image, label, position, color):
@@ -328,12 +376,12 @@ class YOLODetectorNode(Node):
     def log_initialization_info(self):
         """记录初始化信息"""
         self.get_logger().info('=== YOLO Detector Node ===')
-        self.get_logger().info(f'Model: {self.model_path}')
-        self.get_logger().info(f'Device: {self.device}')
-        self.get_logger().info(f'Model loaded: {self.model_loaded}')
-        self.get_logger().info(f'Segmentation: {self.enable_segmentation}')
-        self.get_logger().info(f'Input topic: {self.input_topic}')
-        self.get_logger().info(f'Mask output: {self.output_mask_topic}')
+        self.get_logger().info(f'📦 Model: {self.model_path}')
+        self.get_logger().info(f'🔧 Device: {self.device}')
+        self.get_logger().info(f'✅ Model loaded: {self.model_loaded}')
+        self.get_logger().info(f'🎭 Segmentation: {self.enable_segmentation}')
+        self.get_logger().info(f'🎯 Confidence threshold: {self.confidence_threshold}')
+        self.get_logger().info(f'📋 Target classes: {self.target_classes if self.target_classes else "All classes"}')
 
 def main(args=None):
     rclpy.init(args=args)
