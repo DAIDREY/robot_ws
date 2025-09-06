@@ -1,107 +1,184 @@
 #!/usr/bin/env python3
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, LogInfo, SetEnvironmentVariable
+from launch.actions import DeclareLaunchArgument, LogInfo
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
-from ament_index_python.packages import get_package_share_directory
-import os
-import sys
 
 def generate_launch_description():
-    # 获取包的路径
-    pkg_share = FindPackageShare('robot_visioner').find('robot_visioner')
+    """生成Robot Visioner系统的launch描述（完整修复版）"""
     
-    # 设置Python路径环境变量，确保使用conda环境
-    python_path_action = SetEnvironmentVariable(
-        'PYTHONPATH',
-        os.environ.get('PYTHONPATH', '')
+    # 包路径
+    pkg_robot_visioner = FindPackageShare('robot_visioner')
+    
+    # 配置文件路径
+    yolo_config_file = PathJoinSubstitution([
+        pkg_robot_visioner, 'config', 'enhanced_yolo_config.yaml'
+    ])
+    
+    robot_visioner_config_file = PathJoinSubstitution([
+        pkg_robot_visioner, 'config', 'robot_visioner_config.yaml'
+    ])
+    
+    # Launch参数声明
+    camera_name_arg = DeclareLaunchArgument(
+        'camera_name',
+        default_value='camera',
+        description='相机名称前缀'
     )
     
-    # 声明启动参数
-    model_path_arg = DeclareLaunchArgument(
-        'model_path',
-        default_value='/home/ubuntu/robot_ws/src/robot_visioner/models/best.pt',
-        description='Path to YOLO model file (absolute or relative to package)'
+    use_sim_time_arg = DeclareLaunchArgument(
+        'use_sim_time',
+        default_value='false',
+        description='是否使用仿真时间'
+    )
+    
+    yolo_model_path_arg = DeclareLaunchArgument(
+        'yolo_model_path',
+        default_value='yolov8n-seg.pt',
+        description='YOLO分割模型路径'
     )
     
     confidence_threshold_arg = DeclareLaunchArgument(
         'confidence_threshold',
         default_value='0.5',
-        description='Confidence threshold for object detection'
+        description='检测置信度阈值'
     )
     
-    iou_threshold_arg = DeclareLaunchArgument(
-        'iou_threshold',
-        default_value='0.4',
-        description='IoU threshold for NMS'
+    enable_segmentation_arg = DeclareLaunchArgument(
+        'enable_segmentation',
+        default_value='true',
+        description='是否启用分割功能'
     )
     
-    input_topic_arg = DeclareLaunchArgument(
-        'input_topic',
-        default_value='/camera/color/image_raw',
-        description='Input image topic'
+    enable_clustering_arg = DeclareLaunchArgument(
+        'enable_clustering',
+        default_value='true',
+        description='是否启用点云聚类分析'
     )
     
-    output_topic_arg = DeclareLaunchArgument(
-        'output_topic',
-        default_value='/yolov8/image',
-        description='Output annotated image topic'
-    )
-    
-    camera_info_topic_arg = DeclareLaunchArgument(
-        'camera_info_topic',
-        default_value='/camera/color/camera_info',
-        description='Camera info topic'
+    frame_id_arg = DeclareLaunchArgument(
+        'frame_id',
+        default_value='camera_depth_optical_frame',
+        description='参考坐标系'
     )
     
     device_arg = DeclareLaunchArgument(
         'device',
         default_value='cuda',
-        description='Device to run inference on (cpu or cuda)'
+        description='YOLO推理设备 (cpu/cuda)'
     )
     
-    config_file_arg = DeclareLaunchArgument(
-        'config_file',
-        default_value=PathJoinSubstitution([pkg_share, 'config', 'yolo_config.yaml']),
-        description='Path to configuration file'
+    target_classes_arg = DeclareLaunchArgument(
+        'target_classes',
+        default_value='',
+        description='目标检测类别，例如："0,1,2" 或空字符串表示所有类别'
     )
     
-    # YOLO检测节点
-    yolo_detector_node = Node(
+    # 获取launch配置
+    camera_name = LaunchConfiguration('camera_name')
+    use_sim_time = LaunchConfiguration('use_sim_time')
+    yolo_model_path = LaunchConfiguration('yolo_model_path')
+    confidence_threshold = LaunchConfiguration('confidence_threshold')
+    enable_segmentation = LaunchConfiguration('enable_segmentation')
+    enable_clustering = LaunchConfiguration('enable_clustering')
+    frame_id = LaunchConfiguration('frame_id')
+    device = LaunchConfiguration('device')
+    target_classes = LaunchConfiguration('target_classes')
+    
+    # 增强版YOLO检测节点
+    enhanced_yolo_node = Node(
         package='robot_visioner',
         executable='yolo_detector',
         name='yolo_detector',
-        parameters=[{
-            'model_path': LaunchConfiguration('model_path'),
-            'confidence_threshold': LaunchConfiguration('confidence_threshold'),
-            'iou_threshold': LaunchConfiguration('iou_threshold'),
-            'input_topic': LaunchConfiguration('input_topic'),
-            'output_topic': LaunchConfiguration('output_topic'),
-            'camera_info_topic': LaunchConfiguration('camera_info_topic'),
-            'device': LaunchConfiguration('device'),
-        }],
+        parameters=[
+            yolo_config_file,  # 加载配置文件
+            {
+                # 覆盖配置文件中的特定参数（使用正确的话题名称）
+                'model_path': yolo_model_path,
+                'input_topic': '/camera/color/image_raw',           # 正确的RGB话题
+                'camera_info_topic': '/camera/color/camera_info',   # 正确的RGB相机信息话题
+                'output_detection_topic': '/yolo/detection_result',
+                'output_mask_topic': '/yolo/mask',
+                'output_combined_topic': '/yolo/combined_result',
+                'confidence_threshold': confidence_threshold,
+                'enable_segmentation': enable_segmentation,
+                'target_classes': target_classes,
+                'device': device,
+                'use_sim_time': use_sim_time,
+            }
+        ],
         output='screen',
         emulate_tty=True,
-        # 添加环境变量，确保使用正确的Python路径
-        additional_env={'PYTHONPATH': os.environ.get('PYTHONPATH', '')},
-        # 如果需要，也可以指定Python可执行文件
-        # prefix=f'{sys.executable} -m',
+        respawn=True,
+        respawn_delay=2.0,
+    )
+    
+    # Robot Visioner主节点
+    robot_visioner_node = Node(
+        package='robot_visioner',
+        executable='robot_visioner',
+        name='robot_visioner',
+        parameters=[
+            robot_visioner_config_file,  # 加载配置文件
+            {
+                # 覆盖配置文件中的特定参数（使用正确的话题名称）
+                'depth_topic': '/camera/depth/image_raw',           # 深度图话题
+                'mask_topic': '/yolo/mask',                         # 来自YOLO的mask
+                'camera_info_topic': '/camera/depth/camera_info',   # 深度相机信息话题
+                'output_topic': '/extracted_pointcloud',
+                'frame_id': frame_id,
+                'enable_clustering': enable_clustering,
+                'use_sim_time': use_sim_time,
+            }
+        ],
+        output='screen',
+        emulate_tty=True,
+        respawn=True,
+        respawn_delay=2.0,
     )
     
     return LaunchDescription([
-        python_path_action,
-        model_path_arg,
+        # Launch参数
+        camera_name_arg,
+        use_sim_time_arg,
+        yolo_model_path_arg,
         confidence_threshold_arg,
-        iou_threshold_arg,
-        input_topic_arg,
-        output_topic_arg,
-        camera_info_topic_arg,
+        enable_segmentation_arg,
+        enable_clustering_arg,
+        frame_id_arg,
         device_arg,
-        config_file_arg,
-        LogInfo(msg=['Starting YOLO Detector with model: ', LaunchConfiguration('model_path')]),
-        LogInfo(msg=['Using Python executable: ', sys.executable]),
-        LogInfo(msg=['PYTHONPATH: ', os.environ.get('PYTHONPATH', 'Not set')]),
-        yolo_detector_node,
+        target_classes_arg,
+        
+        # 启动信息
+        LogInfo(msg='🚀 启动Robot Visioner系统（完整修复版）...'),
+        LogInfo(msg=['📷 相机前缀: ', camera_name]),
+        LogInfo(msg=['🎯 YOLO模型: ', yolo_model_path]),
+        LogInfo(msg=['🔧 设备: ', device]),
+        LogInfo(msg=['📊 坐标系: ', frame_id]),
+        LogInfo(msg=['🧩 分割功能: ', enable_segmentation]),
+        LogInfo(msg=['🔍 聚类分析: ', enable_clustering]),
+        LogInfo(msg='📋 正确的话题映射:'),
+        LogInfo(msg='  RGB图像: /camera/color/image_raw'),
+        LogInfo(msg='  深度图像: /camera/depth/image_raw'),
+        LogInfo(msg='  RGB相机信息: /camera/color/camera_info'),
+        LogInfo(msg='  深度相机信息: /camera/depth/camera_info'),
+        LogInfo(msg='📤 输出话题:'),
+        LogInfo(msg='  YOLO检测结果: /yolo/detection_result'),
+        LogInfo(msg='  分割Mask: /yolo/mask'),
+        LogInfo(msg='  合并结果: /yolo/combined_result'),
+        LogInfo(msg='  提取点云: /extracted_pointcloud'),
+        LogInfo(msg='  中心点: /robot_visioner/center_point'),
+        LogInfo(msg='  可视化标记: /robot_visioner/center_marker'),
+        
+        # 节点
+        enhanced_yolo_node,
+        robot_visioner_node,
+        
+        LogInfo(msg='✅ Robot Visioner系统启动完成'),
+        LogInfo(msg='💡 检查数据流命令:'),
+        LogInfo(msg='  ros2 topic hz /yolo/mask'),
+        LogInfo(msg='  ros2 topic hz /extracted_pointcloud'),
+        LogInfo(msg='  ros2 topic hz /robot_visioner/center_point'),
     ])
