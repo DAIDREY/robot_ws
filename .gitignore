@@ -73,7 +73,7 @@ docs/_build/
 .env
 .venv/
 venv/
-
+.pt
 # Other CAD files (optional - uncomment if needed)
 # *.step
 # *.stp
