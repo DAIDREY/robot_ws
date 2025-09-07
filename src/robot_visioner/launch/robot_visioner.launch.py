@@ -93,7 +93,7 @@ def generate_launch_description():
         executable='yolo_detector',
         name='yolo_detector',
         parameters=[
-            yolo_config_file,  # 加载配置文件
+            yolo_config_file,  # 加载enhanced_yolo_config.yaml配置文件
             {
                 # 覆盖配置文件中的特定参数（使用正确的话题名称）
                 'model_path': yolo_model_path,
@@ -121,7 +121,7 @@ def generate_launch_description():
         executable='robot_visioner',
         name='robot_visioner',
         parameters=[
-            robot_visioner_config_file,  # 加载配置文件
+            robot_visioner_config_file,  # 加载robot_visioner_config.yaml配置文件
             {
                 # 覆盖配置文件中的特定参数（使用正确的话题名称）
                 'depth_topic': '/camera/depth/image_raw',           # 深度图话题

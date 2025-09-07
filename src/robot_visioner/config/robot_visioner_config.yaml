@@ -1,30 +1,32 @@
 # config/robot_visioner_config.yaml
-# Robot Visioner 节点配置文件
+# Robot Visioner 彩色点云配置文件
 
 robot_visioner:
   ros__parameters:
-    # 话题配置
-    depth_topic: "/camera/depth/image_raw"
-    mask_topic: "/yolo/mask" 
-    camera_info_topic: "/camera/camera_info"
-    output_topic: "/extracted_pointcloud"
+    # 话题配置（支持彩色点云）
+    rgb_topic: "/camera/color/image_raw"            # RGB图像话题（新增）
+    depth_topic: "/camera/depth/image_raw"          # 深度图像话题
+    mask_topic: "/yolo/mask"                        # 来自YOLO的分割mask话题
+    camera_info_topic: "/camera/depth/camera_info"  # 深度相机信息话题
+    output_topic: "/extracted_pointcloud"           # 输出彩色点云话题
     
     # 处理参数
     depth_scale: 1000.0              # 深度缩放因子 (mm -> m)
     mask_threshold: 128              # Mask二值化阈值 (0-255)
     sync_tolerance: 0.05             # 时间同步容差 (秒)
+    enable_rgb_color: true           # 是否启用RGB真彩色（新增）
     
     # 聚类分析参数
     enable_clustering: true          # 是否启用聚类
     cluster_tolerance: 0.02          # 聚类容差 (米)
-    min_cluster_size: 100            # 最小聚类大小 (点数)
+    min_cluster_size: 30            # 最小聚类大小 (点数)
     max_cluster_size: 25000          # 最大聚类大小 (点数)
     
     # 点云过滤参数
     enable_voxel_filter: true        # 是否启用体素滤波
-    voxel_leaf_size: 0.01            # 体素大小 (米)
+    voxel_leaf_size: 0.008           # 体素大小 (米) - 更精细以保持颜色细节
     enable_outlier_filter: true      # 是否启用离群点过滤
-    outlier_mean_k: 50               # 离群点检测邻域点数
+    outlier_mean_k: 30               # 离群点检测邻域点数 - 减少以提高性能
     outlier_stddev_mul: 1.0          # 离群点标准差倍数
     
     # 工作空间限制 (米)
@@ -36,48 +38,39 @@ robot_visioner:
     workspace_z_max: 3.0
     
     # 可视化参数
-    marker_scale: 0.05               # 标记大小 (米)
-    frame_id: "camera_link"          # 参考坐标系
+    marker_scale: 0.08               # 标记大小 (米) - 稍大以便观察
+    frame_id: "camera_depth_optical_frame"  # 参考坐标系
     
     # 性能参数
     processing_rate: 10.0            # 处理频率 (Hz)
     
-# YOLO分割节点配置
-yolo_segmentation:
-  ros__parameters:
-    model_path: "yolov8n-seg.pt"
-    confidence_threshold: 0.5
-    iou_threshold: 0.5
-    target_classes: []               # 空列表表示检测所有类别
-    # target_classes: [0, 1, 2]     # 示例：只检测person, bicycle, car
+    # ROS2参数
+    use_sim_time: false              # 是否使用仿真时间
     
-    # 输入输出话题
-    input_topic: "/camera/image_raw"
-    output_mask_topic: "/yolo/mask"
-    output_result_topic: "/yolo/segmentation_result"
-    
-    # 处理参数
-    max_detections: 100
-    mask_threshold: 0.5
+    # 输出话题配置
+    center_point_topic: "/robot_visioner/center_point"        # 中心点话题
+    center_marker_topic: "/robot_visioner/center_marker"      # 中心点标记话题
+    cluster_markers_topic: "/robot_visioner/cluster_markers"  # 聚类标记话题
 
-# 相机配置（参考）
-camera_config:
-  ros__parameters:
-    # Intel RealSense D435 示例参数
-    image_width: 640
-    image_height: 480
-    depth_width: 640
-    depth_height: 480
+# 彩色点云性能配置建议
+performance_modes:
+  # 高质量彩色模式
+  high_quality:
+    enable_rgb_color: true
+    voxel_leaf_size: 0.005
+    outlier_mean_k: 50
+    enable_outlier_filter: true
     
-    # 内参矩阵 (示例值，需要根据实际相机标定)
-    camera_matrix: [615.0, 0.0, 320.0,
-                   0.0, 615.0, 240.0, 
-                   0.0, 0.0, 1.0]
+  # 高性能模式
+  high_performance:
+    enable_rgb_color: false  # 使用深度着色
+    voxel_leaf_size: 0.02
+    outlier_mean_k: 20
+    enable_outlier_filter: false
     
-    # 畸变系数
-    distortion_coefficients: [0.0, 0.0, 0.0, 0.0, 0.0]
-    
-    # 深度相关参数
-    depth_scale: 0.001               # 深度单位转换 (mm -> m)
-    min_depth: 0.1                   # 最小有效深度 (m)
-    max_depth: 10.0                  # 最大有效深度 (m)
+  # 平衡模式
+  balanced:
+    enable_rgb_color: true
+    voxel_leaf_size: 0.01
+    outlier_mean_k: 30
+    enable_outlier_filter: true

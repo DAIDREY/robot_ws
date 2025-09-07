@@ -48,6 +48,7 @@ public:
 
 private:
     // 回调函数
+    void rgbImageCallback(const sensor_msgs::msg::Image::SharedPtr msg);
     void depthCallback(const sensor_msgs::msg::Image::SharedPtr msg);
     void maskCallback(const sensor_msgs::msg::Image::SharedPtr msg);
     void cameraInfoCallback(const sensor_msgs::msg::CameraInfo::SharedPtr msg);
@@ -57,23 +58,25 @@ private:
     void extractMaskedPointCloud();
     
     // 中心点计算与可视化
-    CenterPoint3D calculateCentroid(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud);
-    std::vector<CenterPoint3D> extractClusterCentroids(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud);
+    CenterPoint3D calculateCentroid(const pcl::PointCloud<pcl::PointXYZRGB>::Ptr& cloud);
+    std::vector<CenterPoint3D> extractClusterCentroids(const pcl::PointCloud<pcl::PointXYZRGB>::Ptr& cloud);
     void publishCenterPoints(const std::vector<CenterPoint3D>& centers, 
                            const std_msgs::msg::Header& header);
     void publishCenterMarkers(const std::vector<CenterPoint3D>& centers, 
                             const std_msgs::msg::Header& header);
     
     // 点云处理辅助函数
-    pcl::PointCloud<pcl::PointXYZ>::Ptr filterPointCloud(
-        const pcl::PointCloud<pcl::PointXYZ>::Ptr& input_cloud);
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr filterPointCloud(
+        const pcl::PointCloud<pcl::PointXYZRGB>::Ptr& input_cloud);
     void validateCenterPoint(CenterPoint3D& center);
+    cv::Vec3b getDepthColor(double depth, double min_depth, double max_depth);
     
     // 参数初始化
     void initializeParameters();
     void logNodeInfo();
 
     // 订阅者
+    rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr rgb_image_sub_;
     rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr depth_sub_;
     rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr mask_sub_;
     rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_sub_;
@@ -85,6 +88,7 @@ private:
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr cluster_markers_pub_;
     
     // 数据缓存
+    sensor_msgs::msg::Image::SharedPtr rgb_image_;
     sensor_msgs::msg::Image::SharedPtr depth_image_;
     sensor_msgs::msg::Image::SharedPtr mask_image_;
     sensor_msgs::msg::CameraInfo::SharedPtr camera_info_;
@@ -94,22 +98,24 @@ private:
     bool camera_info_received_;
     
     // 可配置参数
-    double depth_scale_;           // 深度缩放因子
-    int mask_threshold_;           // Mask二值化阈值
-    double sync_tolerance_;        // 时间同步容差
+    std::string rgb_topic_;            // RGB图像话题
+    double depth_scale_;               // 深度缩放因子
+    int mask_threshold_;               // Mask二值化阈值
+    double sync_tolerance_;            // 时间同步容差
+    bool enable_rgb_color_;            // 是否启用RGB着色
     
     // 点云处理参数
-    bool enable_clustering_;       // 是否启用聚类
-    double cluster_tolerance_;     // 聚类容差
-    int min_cluster_size_;         // 最小聚类大小
-    int max_cluster_size_;         // 最大聚类大小
+    bool enable_clustering_;           // 是否启用聚类
+    double cluster_tolerance_;         // 聚类容差
+    int min_cluster_size_;             // 最小聚类大小
+    int max_cluster_size_;             // 最大聚类大小
     
     // 过滤参数
-    bool enable_voxel_filter_;     // 体素滤波
-    double voxel_leaf_size_;       // 体素大小
-    bool enable_outlier_filter_;   // 离群点过滤
-    int outlier_mean_k_;           // 离群点检测邻域点数
-    double outlier_stddev_mul_;    // 离群点标准差倍数
+    bool enable_voxel_filter_;         // 体素滤波
+    double voxel_leaf_size_;           // 体素大小
+    bool enable_outlier_filter_;       // 离群点过滤
+    int outlier_mean_k_;               // 离群点检测邻域点数
+    double outlier_stddev_mul_;        // 离群点标准差倍数
     
     // 工作空间限制
     double workspace_x_min_, workspace_x_max_;
@@ -117,8 +123,8 @@ private:
     double workspace_z_min_, workspace_z_max_;
     
     // 可视化参数
-    double marker_scale_;          // 标记大小
-    std::string frame_id_;         // 坐标系ID
+    double marker_scale_;              // 标记大小
+    std::string frame_id_;             // 坐标系ID
     
     // 统计信息
     size_t processed_frames_;

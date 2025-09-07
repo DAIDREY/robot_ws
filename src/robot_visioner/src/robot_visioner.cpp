@@ -18,8 +18,13 @@ RobotVisioner::RobotVisioner()
     std::string mask_topic = this->get_parameter("mask_topic").as_string();
     std::string camera_info_topic = this->get_parameter("camera_info_topic").as_string();
     std::string output_topic = this->get_parameter("output_topic").as_string();
+    rgb_topic_ = this->get_parameter("rgb_topic").as_string();
     
     // 订阅者
+    rgb_image_sub_ = this->create_subscription<sensor_msgs::msg::Image>(
+        rgb_topic_, 10, 
+        std::bind(&RobotVisioner::rgbImageCallback, this, std::placeholders::_1));
+        
     depth_sub_ = this->create_subscription<sensor_msgs::msg::Image>(
         depth_topic, 10, 
         std::bind(&RobotVisioner::depthCallback, this, std::placeholders::_1));
@@ -55,13 +60,15 @@ void RobotVisioner::initializeParameters()
     // 声明和获取参数
     this->declare_parameter("depth_topic", "/camera/depth/image_raw");
     this->declare_parameter("mask_topic", "/yolo/mask");
-    this->declare_parameter("camera_info_topic", "/camera/camera_info");
+    this->declare_parameter("camera_info_topic", "/camera/depth/camera_info");
     this->declare_parameter("output_topic", "/extracted_pointcloud");
+    this->declare_parameter("rgb_topic", "/camera/color/image_raw");
     
     // 处理参数
     this->declare_parameter("depth_scale", 1000.0);
     this->declare_parameter("mask_threshold", 128);
     this->declare_parameter("sync_tolerance", 0.05);
+    this->declare_parameter("enable_rgb_color", true);
     
     // 聚类参数
     this->declare_parameter("enable_clustering", true);
@@ -86,12 +93,13 @@ void RobotVisioner::initializeParameters()
     
     // 可视化参数
     this->declare_parameter("marker_scale", 0.05);
-    this->declare_parameter("frame_id", "camera_link");
+    this->declare_parameter("frame_id", "camera_depth_optical_frame");
     
     // 获取参数值
     depth_scale_ = this->get_parameter("depth_scale").as_double();
     mask_threshold_ = this->get_parameter("mask_threshold").as_int();
     sync_tolerance_ = this->get_parameter("sync_tolerance").as_double();
+    enable_rgb_color_ = this->get_parameter("enable_rgb_color").as_bool();
     
     enable_clustering_ = this->get_parameter("enable_clustering").as_bool();
     cluster_tolerance_ = this->get_parameter("cluster_tolerance").as_double();
@@ -117,12 +125,20 @@ void RobotVisioner::initializeParameters()
 
 void RobotVisioner::logNodeInfo()
 {
-    RCLCPP_INFO(this->get_logger(), "=== Robot Visioner 节点已启动 ===");
+    RCLCPP_INFO(this->get_logger(), "=== Robot Visioner 彩色点云节点已启动 ===");
+    RCLCPP_INFO(this->get_logger(), "RGB话题: %s", rgb_topic_.c_str());
     RCLCPP_INFO(this->get_logger(), "深度缩放: %.1f", depth_scale_);
     RCLCPP_INFO(this->get_logger(), "Mask阈值: %d", mask_threshold_);
+    RCLCPP_INFO(this->get_logger(), "RGB着色: %s", enable_rgb_color_ ? "启用" : "禁用");
     RCLCPP_INFO(this->get_logger(), "聚类分析: %s", enable_clustering_ ? "启用" : "禁用");
     RCLCPP_INFO(this->get_logger(), "体素过滤: %s", enable_voxel_filter_ ? "启用" : "禁用");
     RCLCPP_INFO(this->get_logger(), "坐标系: %s", frame_id_.c_str());
+}
+
+void RobotVisioner::rgbImageCallback(const sensor_msgs::msg::Image::SharedPtr msg)
+{
+    rgb_image_ = msg;
+    tryExtractPointCloud();
 }
 
 void RobotVisioner::depthCallback(const sensor_msgs::msg::Image::SharedPtr msg)
@@ -159,15 +175,31 @@ void RobotVisioner::tryExtractPointCloud()
         return;
     }
     
+    // RGB图像是可选的
+    if (enable_rgb_color_ && !rgb_image_) {
+        return;
+    }
+    
     // 检查时间戳同步
     auto depth_time = rclcpp::Time(depth_image_->header.stamp);
     auto mask_time = rclcpp::Time(mask_image_->header.stamp);
     
     if (std::abs((depth_time - mask_time).seconds()) > sync_tolerance_) {
-        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+        RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
                              "深度图和mask时间戳不同步: %.3f秒差异", 
                              std::abs((depth_time - mask_time).seconds()));
         return;
+    }
+    
+    // 如果启用RGB，也检查RGB同步
+    if (enable_rgb_color_ && rgb_image_) {
+        auto rgb_time = rclcpp::Time(rgb_image_->header.stamp);
+        if (std::abs((depth_time - rgb_time).seconds()) > sync_tolerance_) {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                                 "深度图和RGB时间戳不同步: %.3f秒差异", 
+                                 std::abs((depth_time - rgb_time).seconds()));
+            return;
+        }
     }
     
     extractMaskedPointCloud();
@@ -184,16 +216,33 @@ void RobotVisioner::extractMaskedPointCloud()
         
         cv::Mat depth_img = depth_ptr->image;
         cv::Mat mask_img = mask_ptr->image;
+        cv::Mat rgb_img;
+        
+        // 转换RGB图像（如果启用）
+        if (enable_rgb_color_ && rgb_image_) {
+            try {
+                cv_bridge::CvImagePtr rgb_ptr = cv_bridge::toCvCopy(rgb_image_, "bgr8");
+                rgb_img = rgb_ptr->image;
+                
+                // 确保RGB和深度图尺寸匹配
+                if (rgb_img.size() != depth_img.size()) {
+                    cv::resize(rgb_img, rgb_img, depth_img.size());
+                }
+            } catch (const std::exception& e) {
+                RCLCPP_WARN(this->get_logger(), "RGB图像转换失败: %s，使用深度着色", e.what());
+                rgb_img = cv::Mat();
+            }
+        }
         
         // 确保尺寸匹配
         if (depth_img.size() != mask_img.size()) {
             cv::resize(mask_img, mask_img, depth_img.size());
         }
         
-        // 创建点云
-        pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+        // 创建彩色点云
+        pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
         
-        // 遍历所有像素生成点云
+        // 遍历所有像素生成彩色点云
         for (int v = 0; v < depth_img.rows; ++v) {
             for (int u = 0; u < depth_img.cols; ++u) {
                 // 检查mask值
@@ -222,11 +271,28 @@ void RobotVisioner::extractMaskedPointCloud()
                     continue;
                 }
                 
-                // 添加到点云
-                pcl::PointXYZ point;
+                // 创建彩色点
+                pcl::PointXYZRGB point;
                 point.x = x;
                 point.y = y;
                 point.z = z;
+                
+                // 添加颜色信息
+                if (enable_rgb_color_ && !rgb_img.empty() && 
+                    v < rgb_img.rows && u < rgb_img.cols) {
+                    // 使用真实RGB颜色
+                    cv::Vec3b color = rgb_img.at<cv::Vec3b>(v, u);
+                    point.r = color[2];  // OpenCV是BGR，PCL是RGB
+                    point.g = color[1];
+                    point.b = color[0];
+                } else {
+                    // 使用深度着色
+                    cv::Vec3b depth_color = getDepthColor(depth, workspace_z_min_, workspace_z_max_);
+                    point.r = depth_color[0];
+                    point.g = depth_color[1];
+                    point.b = depth_color[2];
+                }
+                
                 cloud->points.push_back(point);
             }
         }
@@ -243,7 +309,7 @@ void RobotVisioner::extractMaskedPointCloud()
         }
         
         // 应用点云过滤
-        pcl::PointCloud<pcl::PointXYZ>::Ptr filtered_cloud = filterPointCloud(cloud);
+        pcl::PointCloud<pcl::PointXYZRGB>::Ptr filtered_cloud = filterPointCloud(cloud);
         
         // 计算中心点
         std::vector<CenterPoint3D> center_points;
@@ -275,7 +341,7 @@ void RobotVisioner::extractMaskedPointCloud()
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
         
         RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                            "处理完成: %zu个点 | %zu个中心点 | 耗时: %ldms | 总帧数: %zu",
+                            "处理完成: %zu个彩色点 | %zu个中心点 | 耗时: %ldms | 总帧数: %zu",
                             filtered_cloud->points.size(), center_points.size(), 
                             duration.count(), processed_frames_);
         
@@ -284,30 +350,67 @@ void RobotVisioner::extractMaskedPointCloud()
     }
 }
 
-pcl::PointCloud<pcl::PointXYZ>::Ptr RobotVisioner::filterPointCloud(
-    const pcl::PointCloud<pcl::PointXYZ>::Ptr& input_cloud)
+cv::Vec3b RobotVisioner::getDepthColor(double depth, double min_depth, double max_depth)
 {
-    pcl::PointCloud<pcl::PointXYZ>::Ptr filtered_cloud = input_cloud;
+    // 将深度值映射到0-1范围
+    double normalized = (depth - min_depth) / (max_depth - min_depth);
+    normalized = std::max(0.0, std::min(1.0, normalized));  // 限制在[0,1]
+    
+    // 创建彩虹色映射
+    cv::Vec3b color;
+    if (normalized < 0.25) {
+        // 蓝色到青色
+        double t = normalized / 0.25;
+        color[0] = static_cast<uint8_t>(0);           // R
+        color[1] = static_cast<uint8_t>(255 * t);     // G  
+        color[2] = static_cast<uint8_t>(255);         // B
+    } else if (normalized < 0.5) {
+        // 青色到绿色
+        double t = (normalized - 0.25) / 0.25;
+        color[0] = static_cast<uint8_t>(0);           // R
+        color[1] = static_cast<uint8_t>(255);         // G
+        color[2] = static_cast<uint8_t>(255 * (1-t)); // B
+    } else if (normalized < 0.75) {
+        // 绿色到黄色
+        double t = (normalized - 0.5) / 0.25;
+        color[0] = static_cast<uint8_t>(255 * t);     // R
+        color[1] = static_cast<uint8_t>(255);         // G
+        color[2] = static_cast<uint8_t>(0);           // B
+    } else {
+        // 黄色到红色
+        double t = (normalized - 0.75) / 0.25;
+        color[0] = static_cast<uint8_t>(255);         // R
+        color[1] = static_cast<uint8_t>(255 * (1-t)); // G
+        color[2] = static_cast<uint8_t>(0);           // B
+    }
+    
+    return color;
+}
+
+pcl::PointCloud<pcl::PointXYZRGB>::Ptr RobotVisioner::filterPointCloud(
+    const pcl::PointCloud<pcl::PointXYZRGB>::Ptr& input_cloud)
+{
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr filtered_cloud = input_cloud;
     
     // 体素滤波
     if (enable_voxel_filter_ && !input_cloud->empty()) {
-        pcl::VoxelGrid<pcl::PointXYZ> voxel_filter;
+        pcl::VoxelGrid<pcl::PointXYZRGB> voxel_filter;
         voxel_filter.setInputCloud(filtered_cloud);
         voxel_filter.setLeafSize(voxel_leaf_size_, voxel_leaf_size_, voxel_leaf_size_);
         
-        pcl::PointCloud<pcl::PointXYZ>::Ptr voxel_filtered(new pcl::PointCloud<pcl::PointXYZ>);
+        pcl::PointCloud<pcl::PointXYZRGB>::Ptr voxel_filtered(new pcl::PointCloud<pcl::PointXYZRGB>);
         voxel_filter.filter(*voxel_filtered);
         filtered_cloud = voxel_filtered;
     }
     
     // 离群点过滤
-    if (enable_outlier_filter_ && filtered_cloud->size() > outlier_mean_k_) {
-        pcl::StatisticalOutlierRemoval<pcl::PointXYZ> outlier_filter;
+    if (enable_outlier_filter_ && filtered_cloud->size() > static_cast<size_t>(outlier_mean_k_)) {
+        pcl::StatisticalOutlierRemoval<pcl::PointXYZRGB> outlier_filter;
         outlier_filter.setInputCloud(filtered_cloud);
         outlier_filter.setMeanK(outlier_mean_k_);
         outlier_filter.setStddevMulThresh(outlier_stddev_mul_);
         
-        pcl::PointCloud<pcl::PointXYZ>::Ptr outlier_filtered(new pcl::PointCloud<pcl::PointXYZ>);
+        pcl::PointCloud<pcl::PointXYZRGB>::Ptr outlier_filtered(new pcl::PointCloud<pcl::PointXYZRGB>);
         outlier_filter.filter(*outlier_filtered);
         filtered_cloud = outlier_filtered;
     }
@@ -315,7 +418,7 @@ pcl::PointCloud<pcl::PointXYZ>::Ptr RobotVisioner::filterPointCloud(
     return filtered_cloud;
 }
 
-CenterPoint3D RobotVisioner::calculateCentroid(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud)
+CenterPoint3D RobotVisioner::calculateCentroid(const pcl::PointCloud<pcl::PointXYZRGB>::Ptr& cloud)
 {
     if (cloud->empty()) {
         return CenterPoint3D();
@@ -332,7 +435,7 @@ CenterPoint3D RobotVisioner::calculateCentroid(const pcl::PointCloud<pcl::PointX
 }
 
 std::vector<CenterPoint3D> RobotVisioner::extractClusterCentroids(
-    const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud)
+    const pcl::PointCloud<pcl::PointXYZRGB>::Ptr& cloud)
 {
     std::vector<CenterPoint3D> centers;
     
@@ -341,11 +444,11 @@ std::vector<CenterPoint3D> RobotVisioner::extractClusterCentroids(
     }
     
     // 欧几里得聚类
-    pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>);
+    pcl::search::KdTree<pcl::PointXYZRGB>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZRGB>);
     tree->setInputCloud(cloud);
     
     std::vector<pcl::PointIndices> cluster_indices;
-    pcl::EuclideanClusterExtraction<pcl::PointXYZ> ec;
+    pcl::EuclideanClusterExtraction<pcl::PointXYZRGB> ec;
     ec.setClusterTolerance(cluster_tolerance_);
     ec.setMinClusterSize(min_cluster_size_);
     ec.setMaxClusterSize(max_cluster_size_);
@@ -355,7 +458,7 @@ std::vector<CenterPoint3D> RobotVisioner::extractClusterCentroids(
     
     // 计算每个聚类的中心点
     for (const auto& indices : cluster_indices) {
-        pcl::PointCloud<pcl::PointXYZ>::Ptr cluster_cloud(new pcl::PointCloud<pcl::PointXYZ>);
+        pcl::PointCloud<pcl::PointXYZRGB>::Ptr cluster_cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
         
         for (const auto& index : indices.indices) {
             cluster_cloud->points.push_back(cloud->points[index]);
@@ -430,14 +533,14 @@ void RobotVisioner::publishCenterMarkers(const std::vector<CenterPoint3D>& cente
         marker.pose.position.z = best_center.z;
         marker.pose.orientation.w = 1.0;
         
-        marker.scale.x = marker_scale_ * 2;
-        marker.scale.y = marker_scale_ * 2;
-        marker.scale.z = marker_scale_ * 2;
+        marker.scale.x = marker_scale_ * 3;  // 更大的标记
+        marker.scale.y = marker_scale_ * 3;
+        marker.scale.z = marker_scale_ * 3;
         
         marker.color.r = 1.0;
         marker.color.g = 0.0;
         marker.color.b = 0.0;
-        marker.color.a = 0.8;
+        marker.color.a = 0.9;  // 更不透明
         
         marker.lifetime = rclcpp::Duration::from_seconds(1.0);
         
@@ -463,13 +566,12 @@ void RobotVisioner::publishCenterMarkers(const std::vector<CenterPoint3D>& cente
             marker.pose.position.z = center.z;
             marker.pose.orientation.w = 1.0;
             
-            marker.scale.x = marker_scale_;
-            marker.scale.y = marker_scale_;
-            marker.scale.z = marker_scale_;
+            marker.scale.x = marker_scale_ * (1.0 + center.confidence);
+            marker.scale.y = marker_scale_ * (1.0 + center.confidence);
+            marker.scale.z = marker_scale_ * (1.0 + center.confidence);
             
-            // 根据置信度设置颜色
             marker.color.r = 0.0;
-            marker.color.g = 1.0;
+            marker.color.g = 1.0;  // 绿色
             marker.color.b = 0.0;
             marker.color.a = std::min(1.0, center.confidence * 2.0);
             
