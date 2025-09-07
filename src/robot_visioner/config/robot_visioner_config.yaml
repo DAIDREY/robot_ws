@@ -1,6 +1,3 @@
-# config/robot_visioner_config.yaml
-# Robot Visioner 彩色点云配置文件
-
 robot_visioner:
   ros__parameters:
     # 话题配置（支持彩色点云）
@@ -51,26 +48,3 @@ robot_visioner:
     center_point_topic: "/robot_visioner/center_point"        # 中心点话题
     center_marker_topic: "/robot_visioner/center_marker"      # 中心点标记话题
     cluster_markers_topic: "/robot_visioner/cluster_markers"  # 聚类标记话题
-
-# 彩色点云性能配置建议
-performance_modes:
-  # 高质量彩色模式
-  high_quality:
-    enable_rgb_color: true
-    voxel_leaf_size: 0.005
-    outlier_mean_k: 50
-    enable_outlier_filter: true
-    
-  # 高性能模式
-  high_performance:
-    enable_rgb_color: false  # 使用深度着色
-    voxel_leaf_size: 0.02
-    outlier_mean_k: 20
-    enable_outlier_filter: false
-    
-  # 平衡模式
-  balanced:
-    enable_rgb_color: true
-    voxel_leaf_size: 0.01
-    outlier_mean_k: 30
-    enable_outlier_filter: true
