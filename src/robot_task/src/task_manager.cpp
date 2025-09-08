@@ -128,7 +128,7 @@ void TaskManager::objectPoseCallback(const robot_task::msg::ObjectPose::SharedPt
         latest_object_pose_ = *msg;
         object_detected_ = true;
         
-        RCLCPP_DEBUG(this->get_logger(), 
+        RCLCPP_INFO(this->get_logger(), 
             "收到物体姿态: %s at (%.3f, %.3f, %.3f), 角度: %.1f°, 置信度: %.2f",
             msg->object_name.c_str(),
             msg->position.x, msg->position.y, msg->position.z,
