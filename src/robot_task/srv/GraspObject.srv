@@ -1,0 +1,7 @@
+# 请求
+string object_name          # 目标物体名称 (如: "cup", "bottle")
+---
+# 响应
+bool success               # 是否成功
+string message            # 结果描述信息
+ObjectPose object_pose    # 检测到的物体姿态 (如果成功)

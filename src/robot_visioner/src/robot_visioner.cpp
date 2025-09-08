@@ -37,6 +37,11 @@ RobotVisioner::RobotVisioner()
         camera_info_topic, 10,
         std::bind(&RobotVisioner::cameraInfoCallback, this, std::placeholders::_1));
     
+    // 新增：订阅YOLO检测信息
+    detection_info_sub_ = this->create_subscription<std_msgs::msg::String>(
+        "/yolo/detection_info", 10,
+        std::bind(&RobotVisioner::detectionInfoCallback, this, std::placeholders::_1));
+    
     // 发布者
     pointcloud_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(
         output_topic, 10);
@@ -50,19 +55,26 @@ RobotVisioner::RobotVisioner()
     cluster_markers_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
         "/robot_visioner/cluster_markers", 10);
     
-    last_process_time_ = this->now();
+    // 新增：发布ObjectPose给robot_task
+    object_pose_pub_ = this->create_publisher<robot_task::msg::ObjectPose>(
+        "/robot_visioner/object_pose", 10);
     
+    // 初始化检测信息
+    latest_detection_.valid = false;
+    
+    // 输出节点信息
     logNodeInfo();
 }
 
 void RobotVisioner::initializeParameters()
 {
-    // 声明和获取参数
+    // 声明参数
+    this->declare_parameter("rgb_topic", "/camera/color/image_raw");
     this->declare_parameter("depth_topic", "/camera/depth/image_raw");
     this->declare_parameter("mask_topic", "/yolo/mask");
     this->declare_parameter("camera_info_topic", "/camera/depth/camera_info");
     this->declare_parameter("output_topic", "/extracted_pointcloud");
-    this->declare_parameter("rgb_topic", "/camera/color/image_raw");
+    this->declare_parameter("frame_id", "camera_depth_optical_frame");
     
     // 处理参数
     this->declare_parameter("depth_scale", 1000.0);
@@ -73,14 +85,14 @@ void RobotVisioner::initializeParameters()
     // 聚类参数
     this->declare_parameter("enable_clustering", true);
     this->declare_parameter("cluster_tolerance", 0.02);
-    this->declare_parameter("min_cluster_size", 100);
+    this->declare_parameter("min_cluster_size", 30);
     this->declare_parameter("max_cluster_size", 25000);
     
     // 过滤参数
     this->declare_parameter("enable_voxel_filter", true);
-    this->declare_parameter("voxel_leaf_size", 0.01);
+    this->declare_parameter("voxel_leaf_size", 0.008);
     this->declare_parameter("enable_outlier_filter", true);
-    this->declare_parameter("outlier_mean_k", 50);
+    this->declare_parameter("outlier_mean_k", 30);
     this->declare_parameter("outlier_stddev_mul", 1.0);
     
     // 工作空间参数
@@ -92,8 +104,7 @@ void RobotVisioner::initializeParameters()
     this->declare_parameter("workspace_z_max", 3.0);
     
     // 可视化参数
-    this->declare_parameter("marker_scale", 0.05);
-    this->declare_parameter("frame_id", "camera_depth_optical_frame");
+    this->declare_parameter("marker_scale", 0.08);
     
     // 获取参数值
     depth_scale_ = this->get_parameter("depth_scale").as_double();
@@ -125,14 +136,20 @@ void RobotVisioner::initializeParameters()
 
 void RobotVisioner::logNodeInfo()
 {
-    RCLCPP_INFO(this->get_logger(), "=== Robot Visioner 彩色点云节点已启动 ===");
-    RCLCPP_INFO(this->get_logger(), "RGB话题: %s", rgb_topic_.c_str());
-    RCLCPP_INFO(this->get_logger(), "深度缩放: %.1f", depth_scale_);
-    RCLCPP_INFO(this->get_logger(), "Mask阈值: %d", mask_threshold_);
-    RCLCPP_INFO(this->get_logger(), "RGB着色: %s", enable_rgb_color_ ? "启用" : "禁用");
-    RCLCPP_INFO(this->get_logger(), "聚类分析: %s", enable_clustering_ ? "启用" : "禁用");
-    RCLCPP_INFO(this->get_logger(), "体素过滤: %s", enable_voxel_filter_ ? "启用" : "禁用");
-    RCLCPP_INFO(this->get_logger(), "坐标系: %s", frame_id_.c_str());
+    RCLCPP_INFO(this->get_logger(), "🤖 Robot Visioner 节点已启动");
+    RCLCPP_INFO(this->get_logger(), "📊 配置信息:");
+    RCLCPP_INFO(this->get_logger(), "   RGB话题: %s", rgb_topic_.c_str());
+    RCLCPP_INFO(this->get_logger(), "   深度话题: %s", this->get_parameter("depth_topic").as_string().c_str());
+    RCLCPP_INFO(this->get_logger(), "   Mask话题: %s", this->get_parameter("mask_topic").as_string().c_str());
+    RCLCPP_INFO(this->get_logger(), "   检测信息话题: /yolo/detection_info");
+    RCLCPP_INFO(this->get_logger(), "   坐标系: %s", frame_id_.c_str());
+    RCLCPP_INFO(this->get_logger(), "📤 发布话题:");
+    RCLCPP_INFO(this->get_logger(), "   点云: %s", this->get_parameter("output_topic").as_string().c_str());
+    RCLCPP_INFO(this->get_logger(), "   中心点: /robot_visioner/center_point");
+    RCLCPP_INFO(this->get_logger(), "   物体姿态: /robot_visioner/object_pose");
+    RCLCPP_INFO(this->get_logger(), "🔧 RGB彩色点云: %s", enable_rgb_color_ ? "启用" : "禁用");
+    RCLCPP_INFO(this->get_logger(), "🔧 聚类分析: %s", enable_clustering_ ? "启用" : "禁用");
+    RCLCPP_INFO(this->get_logger(), "🔧 体素过滤: %s", enable_voxel_filter_ ? "启用" : "禁用");
 }
 
 void RobotVisioner::rgbImageCallback(const sensor_msgs::msg::Image::SharedPtr msg)
@@ -164,8 +181,116 @@ void RobotVisioner::cameraInfoCallback(const sensor_msgs::msg::CameraInfo::Share
     cy_ = msg->k[5];  // K[5]
     
     camera_info_received_ = true;
-    RCLCPP_INFO_ONCE(this->get_logger(), "相机内参已更新: fx=%.2f, fy=%.2f, cx=%.2f, cy=%.2f", 
+    RCLCPP_INFO_ONCE(this->get_logger(), "📸 相机内参已更新: fx=%.2f, fy=%.2f, cx=%.2f, cy=%.2f", 
                      fx_, fy_, cx_, cy_);
+}
+
+void RobotVisioner::detectionInfoCallback(const std_msgs::msg::String::SharedPtr msg)
+{
+    std::lock_guard<std::mutex> lock(detection_mutex_);
+    
+    DetectionInfo info;
+    if (parseDetectionInfo(msg->data, info)) {
+        info.timestamp = this->now();
+        latest_detection_ = info;
+        
+        RCLCPP_DEBUG(this->get_logger(), 
+            "🎯 收到检测信息: %s, 角度: %.1f°, 置信度: %.2f",
+            info.object_name.c_str(), info.rotation_angle, info.confidence);
+    } else {
+        RCLCPP_WARN(this->get_logger(), "解析检测信息失败: %s", msg->data.c_str());
+        latest_detection_.valid = false;
+    }
+}
+
+bool RobotVisioner::parseDetectionInfo(const std::string& json_str, DetectionInfo& info)
+{
+    try {
+        // 更健壮的JSON解析
+        // 查找object_name
+        size_t name_start = json_str.find("\"object_name\": \"");
+        if (name_start == std::string::npos) {
+            name_start = json_str.find("\"object_name\":\"");
+        }
+        if (name_start != std::string::npos) {
+            name_start = json_str.find("\"", name_start + 14) + 1;
+            size_t name_end = json_str.find("\"", name_start);
+            info.object_name = json_str.substr(name_start, name_end - name_start);
+        }
+        
+        // 查找center_x
+        size_t x_start = json_str.find("\"center_x\": ");
+        if (x_start == std::string::npos) {
+            x_start = json_str.find("\"center_x\":");
+        }
+        if (x_start != std::string::npos) {
+            x_start = json_str.find(":", x_start) + 1;
+            // 跳过空格
+            while (x_start < json_str.length() && std::isspace(json_str[x_start])) {
+                x_start++;
+            }
+            size_t x_end = json_str.find(",", x_start);
+            info.center_x = std::stod(json_str.substr(x_start, x_end - x_start));
+        }
+        
+        // 查找center_y
+        size_t y_start = json_str.find("\"center_y\": ");
+        if (y_start == std::string::npos) {
+            y_start = json_str.find("\"center_y\":");
+        }
+        if (y_start != std::string::npos) {
+            y_start = json_str.find(":", y_start) + 1;
+            // 跳过空格
+            while (y_start < json_str.length() && std::isspace(json_str[y_start])) {
+                y_start++;
+            }
+            size_t y_end = json_str.find(",", y_start);
+            info.center_y = std::stod(json_str.substr(y_start, y_end - y_start));
+        }
+        
+        // 查找rotation_angle
+        size_t angle_start = json_str.find("\"rotation_angle\": ");
+        if (angle_start == std::string::npos) {
+            angle_start = json_str.find("\"rotation_angle\":");
+        }
+        if (angle_start != std::string::npos) {
+            angle_start = json_str.find(":", angle_start) + 1;
+            // 跳过空格
+            while (angle_start < json_str.length() && std::isspace(json_str[angle_start])) {
+                angle_start++;
+            }
+            size_t angle_end = json_str.find(",", angle_start);
+            info.rotation_angle = std::stod(json_str.substr(angle_start, angle_end - angle_start));
+        }
+        
+        // 查找confidence
+        size_t conf_start = json_str.find("\"confidence\": ");
+        if (conf_start == std::string::npos) {
+            conf_start = json_str.find("\"confidence\":");
+        }
+        if (conf_start != std::string::npos) {
+            conf_start = json_str.find(":", conf_start) + 1;
+            // 跳过空格
+            while (conf_start < json_str.length() && std::isspace(json_str[conf_start])) {
+                conf_start++;
+            }
+            size_t conf_end = json_str.find(",", conf_start);
+            if (conf_end == std::string::npos) {
+                conf_end = json_str.find("}", conf_start);
+            }
+            info.confidence = std::stod(json_str.substr(conf_start, conf_end - conf_start));
+        }
+        
+        info.valid = true;
+        RCLCPP_DEBUG(this->get_logger(), "解析成功: %s, 角度: %.1f°", 
+                    info.object_name.c_str(), info.rotation_angle);
+        return true;
+        
+    } catch (const std::exception& e) {
+        RCLCPP_WARN(this->get_logger(), "解析检测信息失败: %s", e.what());
+        info.valid = false;
+        return false;
+    }
 }
 
 void RobotVisioner::tryExtractPointCloud()
@@ -329,7 +454,7 @@ void RobotVisioner::extractMaskedPointCloud()
         output_msg.header.frame_id = frame_id_;
         pointcloud_pub_->publish(output_msg);
         
-        // 发布中心点
+        // 发布中心点和物体姿态
         if (!center_points.empty()) {
             publishCenterPoints(center_points, output_msg.header);
             publishCenterMarkers(center_points, output_msg.header);
@@ -341,12 +466,12 @@ void RobotVisioner::extractMaskedPointCloud()
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
         
         RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                            "处理完成: %zu个彩色点 | %zu个中心点 | 耗时: %ldms | 总帧数: %zu",
+                            "✅ 处理完成: %zu个彩色点 | %zu个中心点 | 耗时: %ldms | 总帧数: %zu",
                             filtered_cloud->points.size(), center_points.size(), 
                             duration.count(), processed_frames_);
         
     } catch (const std::exception& e) {
-        RCLCPP_ERROR(this->get_logger(), "点云提取失败: %s", e.what());
+        RCLCPP_ERROR(this->get_logger(), "💥 点云提取失败: %s", e.what());
     }
 }
 
@@ -496,19 +621,54 @@ void RobotVisioner::publishCenterPoints(const std::vector<CenterPoint3D>& center
 {
     if (centers.empty()) return;
     
-    // 发布主要中心点（置信度最高的）
+    // 选择最佳中心点（置信度最高的）
     auto best_center = *std::max_element(centers.begin(), centers.end(),
         [](const CenterPoint3D& a, const CenterPoint3D& b) {
             return a.confidence < b.confidence;
         });
     
+    // 发布传统的PointStamped（用于兼容和调试）
     geometry_msgs::msg::PointStamped center_msg;
     center_msg.header = header;
     center_msg.point.x = best_center.x;
     center_msg.point.y = best_center.y;
     center_msg.point.z = best_center.z;
-    
     center_point_pub_->publish(center_msg);
+    
+    // 新增：发布ObjectPose给robot_task
+    {
+        std::lock_guard<std::mutex> lock(detection_mutex_);
+        
+        // 检查是否有有效的检测信息
+        if (latest_detection_.valid) {
+            // 检查检测信息是否足够新（3秒内）
+            auto detection_age = (this->now() - latest_detection_.timestamp).seconds();
+            if (detection_age < 3.0) {
+                robot_task::msg::ObjectPose object_pose;
+                object_pose.object_name = latest_detection_.object_name;
+                object_pose.position.x = best_center.x;
+                object_pose.position.y = best_center.y;
+                object_pose.position.z = best_center.z;
+                object_pose.rotation_angle = static_cast<float>(latest_detection_.rotation_angle);
+                object_pose.confidence = static_cast<float>(latest_detection_.confidence * best_center.confidence);
+                object_pose.stamp = header.stamp;
+                
+                object_pose_pub_->publish(object_pose);
+                
+                RCLCPP_DEBUG(this->get_logger(), 
+                    "📤 发布物体姿态: %s at (%.3f, %.3f, %.3f), 角度: %.1f°, 置信度: %.2f",
+                    object_pose.object_name.c_str(),
+                    object_pose.position.x, object_pose.position.y, object_pose.position.z,
+                    object_pose.rotation_angle, object_pose.confidence);
+            } else {
+                RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                    "检测信息过期，年龄: %.1f秒", detection_age);
+            }
+        } else {
+            RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                "无有效的检测信息，无法发布ObjectPose");
+        }
+    }
 }
 
 void RobotVisioner::publishCenterMarkers(const std::vector<CenterPoint3D>& centers, 
@@ -596,7 +756,7 @@ int main(int argc, char** argv)
     try {
         rclcpp::spin(node);
     } catch (const std::exception& e) {
-        RCLCPP_ERROR(node->get_logger(), "节点运行错误: %s", e.what());
+        RCLCPP_ERROR(node->get_logger(), "💥 节点运行错误: %s", e.what());
     }
     
     rclcpp::shutdown();

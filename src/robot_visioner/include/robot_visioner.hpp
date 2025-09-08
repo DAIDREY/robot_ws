@@ -11,6 +11,9 @@
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <cv_bridge/cv_bridge.h>
 #include <image_transport/image_transport.hpp>
+#include <std_msgs/msg/string.hpp>
+#include <robot_task/msg/object_pose.hpp>
+#include <mutex>
 
 #include <pcl_ros/transforms.hpp>
 #include <pcl_conversions/pcl_conversions.h>
@@ -47,11 +50,23 @@ public:
     virtual ~RobotVisioner() = default;
 
 private:
+    struct DetectionInfo {
+        std::string object_name;
+        double center_x, center_y;
+        double rotation_angle;
+        double confidence;
+        bool valid = false;
+        rclcpp::Time timestamp; 
+    };
+    
+    DetectionInfo latest_detection_;
+    std::mutex detection_mutex_;
     // 回调函数
     void rgbImageCallback(const sensor_msgs::msg::Image::SharedPtr msg);
     void depthCallback(const sensor_msgs::msg::Image::SharedPtr msg);
     void maskCallback(const sensor_msgs::msg::Image::SharedPtr msg);
     void cameraInfoCallback(const sensor_msgs::msg::CameraInfo::SharedPtr msg);
+    void detectionInfoCallback(const std_msgs::msg::String::SharedPtr msg);
     
     // 主要处理函数
     void tryExtractPointCloud();
@@ -71,6 +86,8 @@ private:
     void validateCenterPoint(CenterPoint3D& center);
     cv::Vec3b getDepthColor(double depth, double min_depth, double max_depth);
     
+    bool parseDetectionInfo(const std::string& json_str, DetectionInfo& info);
+
     // 参数初始化
     void initializeParameters();
     void logNodeInfo();
@@ -80,12 +97,15 @@ private:
     rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr depth_sub_;
     rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr mask_sub_;
     rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_sub_;
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr detection_info_sub_;
     
     // 发布者
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pointcloud_pub_;
     rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr center_point_pub_;
     rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr center_marker_pub_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr cluster_markers_pub_;
+    rclcpp::Publisher<robot_task::msg::ObjectPose>::SharedPtr object_pose_pub_;
+    
     
     // 数据缓存
     sensor_msgs::msg::Image::SharedPtr rgb_image_;
@@ -129,6 +149,7 @@ private:
     // 统计信息
     size_t processed_frames_;
     rclcpp::Time last_process_time_;
+    
 };
 
 } // namespace robot_visioner

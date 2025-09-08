@@ -26,6 +26,7 @@ find_package(pcl_conversions REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(PCL REQUIRED)
 find_package(Eigen3 REQUIRED)
+find_package(robot_task REQUIRED)
 
 # 包含头文件目录
 include_directories(include)
@@ -53,6 +54,7 @@ set(dependencies
   tf2_geometry_msgs
   pcl_ros
   pcl_conversions
+  robot_task
 )
 
 # 创建主要的robot_visioner节点
