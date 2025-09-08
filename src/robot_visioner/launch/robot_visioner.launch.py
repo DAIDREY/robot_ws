@@ -36,7 +36,7 @@ def generate_launch_description():
     
     yolo_model_path_arg = DeclareLaunchArgument(
         'yolo_model_path',
-        default_value='/home/ubuntu/robot_ws/src/robot_visioner/models/best.pt',
+        default_value='/home/ubuntu/models/best.pt',
         description='YOLO分割模型路径'
     )
     
