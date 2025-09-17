@@ -348,17 +348,17 @@ void SerialCommunication::processStatusPacket(const StatusPacket& packet)
 
 void SerialCommunication::parseCoordinateAndAxis0(const StatusPacket& packet, RobotStatus& status)
 {
-    // 解析X, Y, Z坐标 (小端序，除以10得到实际值mm)
-    uint16_t x_raw = static_cast<uint16_t>(packet.data[0]) | (static_cast<uint16_t>(packet.data[1]) << 8);
-    uint16_t y_raw = static_cast<uint16_t>(packet.data[2]) | (static_cast<uint16_t>(packet.data[3]) << 8);
-    uint16_t z_raw = static_cast<uint16_t>(packet.data[4]) | (static_cast<uint16_t>(packet.data[5]) << 8);
+    // 解析X, Y, Z坐标 (大端序，除以10得到实际值mm)
+    int16_t x_raw = (static_cast<int16_t>(packet.data[0]) << 8) | static_cast<int16_t>(packet.data[1]);
+    int16_t y_raw = (static_cast<int16_t>(packet.data[2]) << 8) | static_cast<int16_t>(packet.data[3]);
+    int16_t z_raw = (static_cast<int16_t>(packet.data[4]) << 8) | static_cast<int16_t>(packet.data[5]);
     
     status.x = static_cast<double>(x_raw) / 10.0;
     status.y = static_cast<double>(y_raw) / 10.0;
     status.z = static_cast<double>(z_raw) / 10.0;
     
-    // 解析轴0角度 (除以100得到实际值度)
-    uint16_t a0_raw = static_cast<uint16_t>(packet.data[6]) | (static_cast<uint16_t>(packet.data[7]) << 8);
+    // 解析轴0角度 (大端序，除以100得到实际值度)
+    int16_t a0_raw = (static_cast<int16_t>(packet.data[6]) << 8) | static_cast<int16_t>(packet.data[7]);
     status.joint_angles[0] = static_cast<double>(a0_raw) / 100.0;
     
     RCLCPP_INFO(logger_, "坐标: (%.1f, %.1f, %.1f)mm, 轴0: %.2f°", 
@@ -367,16 +367,16 @@ void SerialCommunication::parseCoordinateAndAxis0(const StatusPacket& packet, Ro
 
 void SerialCommunication::parseAxisAngles2(const StatusPacket& packet, RobotStatus& status)
 {
-    // 解析轴1, 轴2角度
-    uint16_t a1_raw = static_cast<uint16_t>(packet.data[0]) | (static_cast<uint16_t>(packet.data[1]) << 8);
-    uint16_t a2_raw = static_cast<uint16_t>(packet.data[2]) | (static_cast<uint16_t>(packet.data[3]) << 8);
+    // 解析轴1, 轴2角度 (大端序)
+    int16_t a1_raw = (static_cast<int16_t>(packet.data[0]) << 8) | static_cast<int16_t>(packet.data[1]);
+    int16_t a2_raw = (static_cast<int16_t>(packet.data[2]) << 8) | static_cast<int16_t>(packet.data[3]);
     
     status.joint_angles[1] = static_cast<double>(a1_raw) / 100.0;
     status.joint_angles[2] = static_cast<double>(a2_raw) / 100.0;
     
-    // 解析B0, B1姿态角
-    uint16_t b0_raw = static_cast<uint16_t>(packet.data[4]) | (static_cast<uint16_t>(packet.data[5]) << 8);
-    uint16_t b1_raw = static_cast<uint16_t>(packet.data[6]) | (static_cast<uint16_t>(packet.data[7]) << 8);
+    // 解析B0, B1姿态角 (大端序)
+    int16_t b0_raw = (static_cast<int16_t>(packet.data[4]) << 8) | static_cast<int16_t>(packet.data[5]);
+    int16_t b1_raw = (static_cast<int16_t>(packet.data[6]) << 8) | static_cast<int16_t>(packet.data[7]);
     
     status.orientation[0] = static_cast<double>(b0_raw) / 100.0;  // B0
     status.orientation[1] = static_cast<double>(b1_raw) / 100.0;  // B1
@@ -388,14 +388,14 @@ void SerialCommunication::parseAxisAngles2(const StatusPacket& packet, RobotStat
 
 void SerialCommunication::parseAxisAngles3AndWorkspace(const StatusPacket& packet, RobotStatus& status)
 {
-    // 解析AW轴角度 (关节5)
-    uint16_t aw_raw = static_cast<uint16_t>(packet.data[0]) | (static_cast<uint16_t>(packet.data[1]) << 8);
+    // 解析AW轴角度 (关节5) (大端序)
+    int16_t aw_raw = (static_cast<int16_t>(packet.data[0]) << 8) | static_cast<int16_t>(packet.data[1]);
     status.joint_angles[5] = static_cast<double>(aw_raw) / 100.0;  // AW轴 (关节5)
     
-    // 解析工作台坐标
-    uint16_t wk_x = static_cast<uint16_t>(packet.data[2]) | (static_cast<uint16_t>(packet.data[3]) << 8);
-    uint16_t wk_y = static_cast<uint16_t>(packet.data[4]) | (static_cast<uint16_t>(packet.data[5]) << 8);
-    uint16_t wk_z = static_cast<uint16_t>(packet.data[6]) | (static_cast<uint16_t>(packet.data[7]) << 8);
+    // 解析工作台坐标 (大端序)
+    int16_t wk_x = (static_cast<int16_t>(packet.data[2]) << 8) | static_cast<int16_t>(packet.data[3]);
+    int16_t wk_y = (static_cast<int16_t>(packet.data[4]) << 8) | static_cast<int16_t>(packet.data[5]);
+    int16_t wk_z = (static_cast<int16_t>(packet.data[6]) << 8) | static_cast<int16_t>(packet.data[7]);
     
     status.workspace_origin[0] = static_cast<double>(wk_x) / 10.0;
     status.workspace_origin[1] = static_cast<double>(wk_y) / 10.0;
@@ -408,12 +408,12 @@ void SerialCommunication::parseAxisAngles3AndWorkspace(const StatusPacket& packe
 
 void SerialCommunication::parsePWMAndAxis4(const StatusPacket& packet, RobotStatus& status)
 {
-    // 解析PWM值
-    status.pwm_value = static_cast<uint16_t>(packet.data[2]) | (static_cast<uint16_t>(packet.data[3]) << 8);
+    // 解析PWM值 (大端序)
+    status.pwm_value = (static_cast<int16_t>(packet.data[2]) << 8) | static_cast<int16_t>(packet.data[3]);
     
-    // 解析轴角度 W0, W1 (关节3, 关节4)
-    uint16_t w0_raw = static_cast<uint16_t>(packet.data[4]) | (static_cast<uint16_t>(packet.data[5]) << 8);
-    uint16_t w1_raw = static_cast<uint16_t>(packet.data[6]) | (static_cast<uint16_t>(packet.data[7]) << 8);
+    // 解析轴角度 W0, W1 (关节3, 关节4) (大端序)
+    int16_t w0_raw = (static_cast<int16_t>(packet.data[4]) << 8) | static_cast<int16_t>(packet.data[5]);
+    int16_t w1_raw = (static_cast<int16_t>(packet.data[6]) << 8) | static_cast<int16_t>(packet.data[7]);
     
     status.joint_angles[3] = static_cast<double>(w0_raw) / 100.0;  // W0 (关节3)
     status.joint_angles[4] = static_cast<double>(w1_raw) / 100.0;  // W1 (关节4)
