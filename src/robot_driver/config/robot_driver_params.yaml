@@ -24,12 +24,4 @@ seed_robot_driver:
     joint_min_angles: [-150.0, -65.0, -188.0, -167.0, -34.0, -270.0]
     joint_max_angles: [150.0, 110.0, 27.0, 167.0, 208.0, 270.0]
     
-    # 安全设置
-    enable_workspace_check: true
-    enable_joint_limit_check: true
-    emergency_stop_timeout: 5.0   # 秒
     
-    # 调试选项
-    debug_mode: false
-    log_serial_commands: false
-    log_status_packets: false

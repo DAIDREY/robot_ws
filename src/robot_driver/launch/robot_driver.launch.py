@@ -49,11 +49,7 @@ def generate_launch_description():
     def launch_setup(context, *args, **kwargs):
         # 获取参数值
         config_file = LaunchConfiguration('config_file').perform(context)
-        use_simulation = LaunchConfiguration('use_simulation').perform(context)
         
-        # 根据仿真模式选择配置文件
-        if use_simulation.lower() == 'true':
-            config_file = 'simulation_params.yaml'
         
         # 配置文件路径
         config_path = PathJoinSubstitution([
@@ -72,31 +68,11 @@ def generate_launch_description():
                 {
                     'serial_port': LaunchConfiguration('serial_port'),
                     'baudrate': LaunchConfiguration('baudrate'),
-                    'debug_mode': LaunchConfiguration('debug'),
                 }
             ],
             output='screen',
             emulate_tty=True,
-            condition=UnlessCondition(LaunchConfiguration('use_simulation'))
         )
-        
-        # 仿真模式节点（如果需要）
-        simulation_node = Node(
-            package='robot_driver',
-            executable='seed_robot_driver_node',
-            name='seed_robot_driver_sim',
-            parameters=[
-                config_path,
-                {
-                    'simulation_mode': True,
-                    'debug_mode': LaunchConfiguration('debug'),
-                }
-            ],
-            output='screen',
-            emulate_tty=True,
-            condition=IfCondition(LaunchConfiguration('use_simulation'))
-        )
-        
         # 机器人状态发布器
         robot_state_publisher = Node(
             package='robot_state_publisher',
@@ -111,7 +87,6 @@ def generate_launch_description():
         
         return [
             robot_driver_node,
-            simulation_node,
             robot_state_publisher,
         ]
     

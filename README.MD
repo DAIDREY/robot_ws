@@ -21,3 +21,9 @@ conda deactivate
 source install/setup.bash
 ros2 launch robot_description display.launch.py
 ```
+
+```bash
+conda deactivate
+source install/setup.bash
+ros2 launch robot_driver robot_driver.launch.py
+```
