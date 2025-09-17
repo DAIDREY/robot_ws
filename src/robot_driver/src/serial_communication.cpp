@@ -361,7 +361,7 @@ void SerialCommunication::parseCoordinateAndAxis0(const StatusPacket& packet, Ro
     int16_t a0_raw = (static_cast<int16_t>(packet.data[6]) << 8) | static_cast<int16_t>(packet.data[7]);
     status.joint_angles[0] = static_cast<double>(a0_raw) / 100.0;
     
-    RCLCPP_INFO(logger_, "坐标: (%.1f, %.1f, %.1f)mm, 轴0: %.2f°", 
+    RCLCPP_DEBUG(logger_, "坐标: (%.1f, %.1f, %.1f)mm, 轴0: %.2f°", 
                 status.x, status.y, status.z, status.joint_angles[0]);
 }
 
@@ -381,7 +381,7 @@ void SerialCommunication::parseAxisAngles2(const StatusPacket& packet, RobotStat
     status.orientation[0] = static_cast<double>(b0_raw) / 100.0;  // B0
     status.orientation[1] = static_cast<double>(b1_raw) / 100.0;  // B1
     
-    RCLCPP_INFO(logger_, "轴1: %.2f°, 轴2: %.2f°, B0: %.2f°, B1: %.2f°", 
+    RCLCPP_DEBUG(logger_, "轴1: %.2f°, 轴2: %.2f°, B0: %.2f°, B1: %.2f°", 
                 status.joint_angles[1], status.joint_angles[2], 
                 status.orientation[0], status.orientation[1]);
 }
@@ -401,7 +401,7 @@ void SerialCommunication::parseAxisAngles3AndWorkspace(const StatusPacket& packe
     status.workspace_origin[1] = static_cast<double>(wk_y) / 10.0;
     status.workspace_origin[2] = static_cast<double>(wk_z) / 10.0;
     
-    RCLCPP_INFO(logger_, "关节5(AW): %.2f°, 工作台原点: (%.1f, %.1f, %.1f)mm", 
+    RCLCPP_DEBUG(logger_, "关节5(AW): %.2f°, 工作台原点: (%.1f, %.1f, %.1f)mm", 
                 status.joint_angles[5], status.workspace_origin[0], 
                 status.workspace_origin[1], status.workspace_origin[2]);
 }
@@ -419,7 +419,7 @@ void SerialCommunication::parsePWMAndAxis4(const StatusPacket& packet, RobotStat
     status.joint_angles[4] = static_cast<double>(w1_raw) / 100.0;  // W1 (关节4)
     status.orientation[2] = status.joint_angles[4];  // W轴对应orientation的W
     
-    RCLCPP_INFO(logger_, "PWM: %d, 关节3(W0): %.2f°, 关节4(W1): %.2f°", 
+    RCLCPP_DEBUG(logger_, "PWM: %d, 关节3(W0): %.2f°, 关节4(W1): %.2f°", 
                 status.pwm_value, status.joint_angles[3], status.joint_angles[4]);
 }
 
