@@ -1,7 +1,7 @@
 import os
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration, Command
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 from launch import conditions
@@ -12,9 +12,9 @@ def generate_launch_description():
     # Get package directory
     pkg_share = FindPackageShare(package='robot_description').find('robot_description')
     
-    # Path to URDF file
-    default_model_path = os.path.join(pkg_share, 'urdf/seed_robot.urdf.xacro')
-    default_rviz_config_path = os.path.join(pkg_share, 'rviz/urdf_config.rviz')
+    # Path to URDF file (修改为直接使用URDF文件)
+    default_model_path = '/home/ubuntu/robot_ws/src/robot_description/urdf/seed_robot.urdf'
+    default_rviz_config_path = os.path.join(pkg_share, '/home/ubuntu/robot_ws/src/robot_description/rviz/urdf_config.rviz')
     
     # Launch configuration variables
     model = LaunchConfiguration('model')
@@ -54,12 +54,21 @@ def generate_launch_description():
         description='Flag to enable RViz'
     )
     
-    # Robot State Publisher node
+    # 读取URDF文件内容
+    def read_urdf_file(urdf_path):
+        try:
+            with open(urdf_path, 'r') as file:
+                return file.read()
+        except Exception as e:
+            print(f"Error reading URDF file {urdf_path}: {e}")
+            return ""
+    
+    # Robot State Publisher node (修改为直接读取URDF文件)
     robot_state_publisher_node = Node(
         package='robot_state_publisher',
         executable='robot_state_publisher',
         parameters=[{
-            'robot_description': Command(['xacro ', os.path.join(pkg_share, 'urdf', 'seed_robot.urdf.xacro')]),
+            'robot_description': read_urdf_file(default_model_path),
             'use_sim_time': use_sim_time
         }]
     )

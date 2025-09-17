@@ -35,7 +35,7 @@ robot_visioner:
     workspace_z_max: 3.0
     
     # 可视化参数
-    marker_scale: 0.08               # 标记大小 (米) - 稍大以便观察
+    marker_scale: 0.01               # 标记大小 (米) - 稍大以便观察
     frame_id: "camera_depth_optical_frame"  # 参考坐标系
     
     # 性能参数

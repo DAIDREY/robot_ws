@@ -13,8 +13,6 @@ find_package(std_srvs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(trajectory_msgs REQUIRED)
-find_package(control_msgs REQUIRED)
-find_package(moveit_msgs REQUIRED)
 
 # 尝试查找libserial (可选)
 find_library(SERIAL_LIBRARY 
@@ -47,7 +45,6 @@ endif()
 # 创建库
 add_library(${PROJECT_NAME}_lib
     src/serial_communication.cpp
-    src/command_builder.cpp
     src/seed_robot_driver.cpp
 )
 
@@ -59,8 +56,6 @@ ament_target_dependencies(${PROJECT_NAME}_lib
   sensor_msgs
   geometry_msgs
   trajectory_msgs
-  control_msgs
-  moveit_msgs
 )
 
 # 链接libserial (如果找到)
@@ -79,8 +74,6 @@ ament_target_dependencies(seed_robot_driver_node
   sensor_msgs
   geometry_msgs
   trajectory_msgs
-  control_msgs
-  moveit_msgs
 )
 
 # 安装目标
@@ -103,11 +96,6 @@ install(DIRECTORY launch config
   OPTIONAL
 )
 
-if(BUILD_TESTING)
-  find_package(ament_lint_auto REQUIRED)
-  ament_lint_auto_find_test_dependencies()
-endif()
-
 ament_export_include_directories(include)
 ament_export_libraries(${PROJECT_NAME}_lib)
 ament_export_dependencies(
@@ -117,8 +105,6 @@ ament_export_dependencies(
   sensor_msgs
   geometry_msgs
   trajectory_msgs
-  control_msgs
-  moveit_msgs
 )
 
 ament_package()

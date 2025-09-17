@@ -27,6 +27,7 @@ find_package(OpenCV REQUIRED)
 find_package(PCL REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(robot_task REQUIRED)
+find_package(PCL REQUIRED COMPONENTS io)
 
 # 包含头文件目录
 include_directories(include)

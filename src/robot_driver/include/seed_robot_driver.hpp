@@ -9,25 +9,29 @@
 #include <std_msgs/msg/header.hpp>
 #include <std_srvs/srv/trigger.hpp>
 #include <std_msgs/msg/string.hpp>
+
 #include <memory>
 #include <mutex>
 #include <atomic>
+#include <string>
+#include <vector>
+#include <functional>
+#include <chrono>
 
 #include "serial_communication.hpp"
-#include "command_builder.hpp"
 
 namespace robot_driver
 {
 
+// 机器人状态枚举
 enum class RobotState
 {
     DISCONNECTED,
     CONNECTED,
     READY,
     MOVING,
-    ERROR,
-    EMERGENCY_STOP
-};
+    ERROR
+}; 
 
 class SeedRobotDriver : public rclcpp::Node
 {
@@ -67,7 +71,7 @@ public:
     void setJointLimits(const JointAngles& min_angles, const JointAngles& max_angles);
 
 private:
-    // 初始化
+    // 初始化函数
     void initializeParameters();
     void initializePublishers();
     void initializeSubscribers();
@@ -78,16 +82,13 @@ private:
     void statusCallback(const RobotStatus& status);
     void jointTrajectoryCallback(const trajectory_msgs::msg::JointTrajectory::SharedPtr msg);
     void poseTargetCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg);
-    void statusPublishTimer();
+    void publishStatus();
     
     // 服务回调
-    void handleConnectService(
+    void connectService(
         const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
         std::shared_ptr<std_srvs::srv::Trigger::Response> response);
-    void handleDisconnectService(
-        const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
-        std::shared_ptr<std_srvs::srv::Trigger::Response> response);
-    void handleEmergencyStopService(
+    void disconnectService(
         const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
         std::shared_ptr<std_srvs::srv::Trigger::Response> response);
     
@@ -97,39 +98,42 @@ private:
     void publishRobotStatus();
     void updateRobotState();
     bool validateTrajectory(const trajectory_msgs::msg::JointTrajectory& trajectory);
+    std::string stateToString(RobotState state);
     
-    // 参数
+    // 参数变量
     std::string serial_port_;
     int baudrate_;
-    double max_joint_velocity_;
-    double max_cartesian_velocity_;
+    double max_joint_velocity_;        // 度/秒
+    double max_cartesian_velocity_;    // mm/分钟
     Position3D workspace_min_, workspace_max_;
     JointAngles joint_min_, joint_max_;
     
     // 组件
     std::unique_ptr<SerialCommunication> serial_comm_;
-    std::unique_ptr<CommandBuilder> command_builder_;
     
-    // 状态
+    // 状态变量
     std::atomic<RobotState> robot_state_;
     RobotStatus current_status_;
     mutable std::mutex status_mutex_;
     
-    // ROS接口
+    // ROS2 发布者
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_state_pub_;
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pose_pub_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr status_pub_;
     
+    // ROS2 订阅者
     rclcpp::Subscription<trajectory_msgs::msg::JointTrajectory>::SharedPtr trajectory_sub_;
     rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr pose_target_sub_;
     
+    // ROS2 服务
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr connect_service_;
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr disconnect_service_;
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr emergency_stop_service_;
     
+    // ROS2 定时器
     rclcpp::TimerBase::SharedPtr status_timer_;
     
-    // 常量
+    // 静态常量
     static const std::vector<std::string> JOINT_NAMES;
     static const double DEFAULT_JOINT_TOLERANCE;
     static const double DEFAULT_POSITION_TOLERANCE;

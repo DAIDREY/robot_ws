@@ -104,7 +104,7 @@ void RobotVisioner::initializeParameters()
     this->declare_parameter("workspace_z_max", 3.0);
     
     // 可视化参数
-    this->declare_parameter("marker_scale", 0.08);
+    this->declare_parameter("marker_scale", 0.01);
     
     // 获取参数值
     depth_scale_ = this->get_parameter("depth_scale").as_double();
@@ -693,9 +693,9 @@ void RobotVisioner::publishCenterMarkers(const std::vector<CenterPoint3D>& cente
         marker.pose.position.z = best_center.z;
         marker.pose.orientation.w = 1.0;
         
-        marker.scale.x = marker_scale_ * 3;  // 更大的标记
-        marker.scale.y = marker_scale_ * 3;
-        marker.scale.z = marker_scale_ * 3;
+        marker.scale.x = marker_scale_ * 0.1;  // 更大的标记
+        marker.scale.y = marker_scale_ * 0.1;
+        marker.scale.z = marker_scale_ * 0.1;
         
         marker.color.r = 1.0;
         marker.color.g = 0.0;

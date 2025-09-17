@@ -4,19 +4,14 @@ from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.substitutions import FindPackageShare
 from launch.conditions import IfCondition, UnlessCondition
+from launch.substitutions import Command
 import os
 
 def generate_launch_description():
     # 声明启动参数
+    robot_description_pkg = FindPackageShare(package='robot_description').find('robot_description')
     declared_arguments = []
     
-    declared_arguments.append(
-        DeclareLaunchArgument(
-            'robot_ip',
-            default_value='',
-            description='机器人IP地址（如果使用网络连接）'
-        )
-    )
     
     declared_arguments.append(
         DeclareLaunchArgument(
@@ -42,21 +37,6 @@ def generate_launch_description():
         )
     )
     
-    declared_arguments.append(
-        DeclareLaunchArgument(
-            'use_simulation',
-            default_value='false',
-            description='是否使用仿真模式'
-        )
-    )
-    
-    declared_arguments.append(
-        DeclareLaunchArgument(
-            'debug',
-            default_value='false',
-            description='是否启用调试模式'
-        )
-    )
     
     declared_arguments.append(
         DeclareLaunchArgument(
@@ -123,7 +103,7 @@ def generate_launch_description():
             executable='robot_state_publisher',
             name='robot_state_publisher',
             parameters=[{
-                'robot_description': '',  # 需要从robot_description包获取
+                'robot_description': Command(['xacro ', os.path.join(robot_description_pkg, 'urdf', 'seed_robot.urdf.xacro')]),
                 'publish_frequency': 50.0
             }],
             condition=IfCondition(LaunchConfiguration('publish_tf'))
