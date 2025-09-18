@@ -18,6 +18,8 @@ RobotVisioner::RobotVisioner()
     std::string mask_topic = this->get_parameter("mask_topic").as_string();
     std::string camera_info_topic = this->get_parameter("camera_info_topic").as_string();
     std::string output_topic = this->get_parameter("output_topic").as_string();
+    tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
+    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
     rgb_topic_ = this->get_parameter("rgb_topic").as_string();
     
     // 订阅者
@@ -74,7 +76,7 @@ void RobotVisioner::initializeParameters()
     this->declare_parameter("mask_topic", "/yolo/mask");
     this->declare_parameter("camera_info_topic", "/camera/depth/camera_info");
     this->declare_parameter("output_topic", "/extracted_pointcloud");
-    this->declare_parameter("frame_id", "camera_depth_optical_frame");
+    this->declare_parameter("frame_id", "camera_link");
     
     // 处理参数
     this->declare_parameter("depth_scale", 1000.0);
@@ -106,6 +108,8 @@ void RobotVisioner::initializeParameters()
     // 可视化参数
     this->declare_parameter("marker_scale", 0.01);
     
+    this->declare_parameter("target_frame", "base_link");        // 目标坐标系
+    this->declare_parameter("source_frame", "camera_link");  // 源坐标系
     // 获取参数值
     depth_scale_ = this->get_parameter("depth_scale").as_double();
     mask_threshold_ = this->get_parameter("mask_threshold").as_int();
@@ -132,6 +136,9 @@ void RobotVisioner::initializeParameters()
     
     marker_scale_ = this->get_parameter("marker_scale").as_double();
     frame_id_ = this->get_parameter("frame_id").as_string();
+    target_frame_ = this->get_parameter("target_frame").as_string();
+    source_frame_ = this->get_parameter("source_frame").as_string();
+    
 }
 
 void RobotVisioner::logNodeInfo()
@@ -150,6 +157,12 @@ void RobotVisioner::logNodeInfo()
     RCLCPP_INFO(this->get_logger(), "🔧 RGB彩色点云: %s", enable_rgb_color_ ? "启用" : "禁用");
     RCLCPP_INFO(this->get_logger(), "🔧 聚类分析: %s", enable_clustering_ ? "启用" : "禁用");
     RCLCPP_INFO(this->get_logger(), "🔧 体素过滤: %s", enable_voxel_filter_ ? "启用" : "禁用");
+    RCLCPP_INFO(this->get_logger(), "   源坐标系: %s", source_frame_.c_str());
+    RCLCPP_INFO(this->get_logger(), "   目标坐标系: %s", target_frame_.c_str());
+    
+    RCLCPP_INFO(this->get_logger(), "📤 发布话题:");
+    RCLCPP_INFO(this->get_logger(), "   中心点(base_link坐标系): /robot_visioner/center_point");
+    RCLCPP_INFO(this->get_logger(), "   物体姿态(base_link坐标系): /robot_visioner/object_pose");
 }
 
 void RobotVisioner::rgbImageCallback(const sensor_msgs::msg::Image::SharedPtr msg)
@@ -627,46 +640,64 @@ void RobotVisioner::publishCenterPoints(const std::vector<CenterPoint3D>& center
             return a.confidence < b.confidence;
         });
     
-    // 发布传统的PointStamped（用于兼容和调试）
-    geometry_msgs::msg::PointStamped center_msg;
-    center_msg.header = header;
-    center_msg.point.x = best_center.x;
-    center_msg.point.y = best_center.y;
-    center_msg.point.z = best_center.z;
-    center_point_pub_->publish(center_msg);
+    // 创建相机坐标系下的点
+    geometry_msgs::msg::PointStamped camera_point;
+    camera_point.header = header;  // 使用原始的相机坐标系
+    camera_point.point.x = best_center.x;
+    camera_point.point.y = best_center.y;
+    camera_point.point.z = best_center.z;
     
-    // 新增：发布ObjectPose给robot_task
+    // 转换到base_link坐标系
+    geometry_msgs::msg::PointStamped base_link_point;
+    if (transformPointToBaseLink(camera_point, base_link_point)) {
+        // 发布转换后的点（base_link坐标系）
+        center_point_pub_->publish(base_link_point);
+        
+        RCLCPP_DEBUG(this->get_logger(), 
+            "📍 物体中心点 (base_link): x=%.3fm, y=%.3fm, z=%.3fm, 置信度=%.2f",
+            base_link_point.point.x, base_link_point.point.y, base_link_point.point.z,
+            best_center.confidence);
+    } else {
+        // 如果变换失败，发布原始的相机坐标系点（向后兼容）
+        RCLCPP_WARN(this->get_logger(), "坐标变换失败，发布相机坐标系下的点");
+        center_point_pub_->publish(camera_point);
+    }
+    
+    // 发布ObjectPose消息（也转换到base_link） - 在现有的ObjectPose发布部分修改：
     {
         std::lock_guard<std::mutex> lock(detection_mutex_);
         
-        // 检查是否有有效的检测信息
         if (latest_detection_.valid) {
-            // 检查检测信息是否足够新（3秒内）
             auto detection_age = (this->now() - latest_detection_.timestamp).seconds();
             if (detection_age < 3.0) {
                 robot_task::msg::ObjectPose object_pose;
                 object_pose.object_name = latest_detection_.object_name;
-                object_pose.position.x = best_center.x;
-                object_pose.position.y = best_center.y;
-                object_pose.position.z = best_center.z;
+                
+                // 使用base_link坐标系的位置
+                if (transformPointToBaseLink(camera_point, base_link_point)) {
+                    object_pose.position.x = base_link_point.point.x;
+                    object_pose.position.y = base_link_point.point.y;
+                    object_pose.position.z = base_link_point.point.z;
+                    object_pose.stamp = base_link_point.header.stamp;
+                } else {
+                    // 变换失败时使用相机坐标系
+                    object_pose.position.x = best_center.x;
+                    object_pose.position.y = best_center.y;
+                    object_pose.position.z = best_center.z;
+                    object_pose.stamp = header.stamp;
+                }
+                
                 object_pose.rotation_angle = static_cast<float>(latest_detection_.rotation_angle);
                 object_pose.confidence = static_cast<float>(latest_detection_.confidence * best_center.confidence);
-                object_pose.stamp = header.stamp;
                 
                 object_pose_pub_->publish(object_pose);
                 
                 RCLCPP_DEBUG(this->get_logger(), 
-                    "📤 发布物体姿态: %s at (%.3f, %.3f, %.3f), 角度: %.1f°, 置信度: %.2f",
+                    "📤 发布物体姿态(base_link): %s at (%.3f, %.3f, %.3f), 角度: %.1f°, 置信度: %.2f",
                     object_pose.object_name.c_str(),
                     object_pose.position.x, object_pose.position.y, object_pose.position.z,
                     object_pose.rotation_angle, object_pose.confidence);
-            } else {
-                RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                    "检测信息过期，年龄: %.1f秒", detection_age);
             }
-        } else {
-            RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                "无有效的检测信息，无法发布ObjectPose");
         }
     }
 }
@@ -741,6 +772,35 @@ void RobotVisioner::publishCenterMarkers(const std::vector<CenterPoint3D>& cente
         }
         
         cluster_markers_pub_->publish(marker_array);
+    }
+}
+
+bool RobotVisioner::transformPointToBaseLink(const geometry_msgs::msg::PointStamped& point_in,
+                                             geometry_msgs::msg::PointStamped& point_out)
+{
+    try {
+        // 等待变换可用（超时时间为1秒）
+        if (!tf_buffer_->canTransform(target_frame_, point_in.header.frame_id, 
+                                     point_in.header.stamp, rclcpp::Duration::from_seconds(1.0))) {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                "无法获取从 %s 到 %s 的变换", 
+                point_in.header.frame_id.c_str(), target_frame_.c_str());
+            return false;
+        }
+        
+        // 执行坐标变换
+        tf_buffer_->transform(point_in, point_out, target_frame_);
+        
+        RCLCPP_DEBUG(this->get_logger(), 
+            "坐标变换: (%.3f, %.3f, %.3f) %s -> (%.3f, %.3f, %.3f) %s",
+            point_in.point.x, point_in.point.y, point_in.point.z, point_in.header.frame_id.c_str(),
+            point_out.point.x, point_out.point.y, point_out.point.z, point_out.header.frame_id.c_str());
+        
+        return true;
+    } catch (const tf2::TransformException& ex) {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+            "TF2变换失败: %s", ex.what());
+        return false;
     }
 }
 

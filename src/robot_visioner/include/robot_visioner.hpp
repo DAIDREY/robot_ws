@@ -29,6 +29,11 @@
 #include <Eigen/Dense>
 #include <memory>
 
+#include <tf2_ros/transform_listener.h>
+#include <tf2_ros/buffer.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <geometry_msgs/msg/transform_stamped.hpp>
+
 namespace robot_visioner
 {
 
@@ -59,6 +64,11 @@ private:
         rclcpp::Time timestamp; 
     };
     
+    std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
+    std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+    std::string target_frame_;  // 目标坐标系 (base_link)
+    std::string source_frame_;  // 源坐标系 (camera_depth_optical_frame)
+
     DetectionInfo latest_detection_;
     std::mutex detection_mutex_;
     // 回调函数
@@ -87,6 +97,9 @@ private:
     cv::Vec3b getDepthColor(double depth, double min_depth, double max_depth);
     
     bool parseDetectionInfo(const std::string& json_str, DetectionInfo& info);
+
+    bool transformPointToBaseLink(const geometry_msgs::msg::PointStamped& point_in,
+                                  geometry_msgs::msg::PointStamped& point_out);
 
     // 参数初始化
     void initializeParameters();
