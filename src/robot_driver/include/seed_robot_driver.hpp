@@ -57,21 +57,13 @@ public:
     bool emergencyRelease();
     bool resetRobot();
     bool calibrateRobot();
-    bool setWorkspaceOrigin(const Position3D& origin);
     
-    // 状态查询
-    RobotStatus getCurrentStatus() const;
-    Position3D getCurrentPosition() const;
-    JointAngles getCurrentJointAngles() const;
-    
-    // 安全功能
-    bool isInWorkspace(const Position3D& position) const;
-    bool isValidJointAngles(const JointAngles& angles) const;
-    void setWorkspaceLimits(const Position3D& min_pos, const Position3D& max_pos);
-    void setJointLimits(const JointAngles& min_angles, const JointAngles& max_angles);
+    // 运动完成检测
+    bool waitForMotionComplete(double timeout_seconds = 10.0, 
+                              double position_threshold = 0.1, 
+                              double angle_threshold = 0.01);
 
 private:
-    // 初始化函数
     void initializeParameters();
     void initializePublishers();
     void initializeSubscribers();
@@ -80,24 +72,21 @@ private:
     
     // 回调函数
     void statusCallback(const RobotStatus& status);
-    void jointTrajectoryCallback(const trajectory_msgs::msg::JointTrajectory::SharedPtr msg);
+    void trajectoryCallback(const trajectory_msgs::msg::JointTrajectory::SharedPtr msg);
     void poseTargetCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg);
     void publishStatus();
     
     // 服务回调
-    void connectService(
-        const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
-        std::shared_ptr<std_srvs::srv::Trigger::Response> response);
-    void disconnectService(
-        const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
-        std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+    void connectServiceCallback(const std_srvs::srv::Trigger::Request::SharedPtr request,
+                               std_srvs::srv::Trigger::Response::SharedPtr response);
+    void disconnectServiceCallback(const std_srvs::srv::Trigger::Request::SharedPtr request,
+                                  std_srvs::srv::Trigger::Response::SharedPtr response);
+    void emergencyStopServiceCallback(const std_srvs::srv::Trigger::Request::SharedPtr request,
+                                     std_srvs::srv::Trigger::Response::SharedPtr response);
     
-    // 内部方法
-    void publishJointState();
-    void publishCurrentPose();
-    void publishRobotStatus();
-    void updateRobotState();
-    bool validateTrajectory(const trajectory_msgs::msg::JointTrajectory& trajectory);
+    // 工具函数
+    sensor_msgs::msg::JointState createJointStateMessage(const RobotStatus& status);
+    geometry_msgs::msg::PoseStamped createPoseMessage(const RobotStatus& status);
     std::string stateToString(RobotState state);
     
     // 参数变量
@@ -115,6 +104,11 @@ private:
     std::atomic<RobotState> robot_state_;
     RobotStatus current_status_;
     mutable std::mutex status_mutex_;
+    
+    // 运动检测变量
+    RobotStatus last_check_status_;
+    std::chrono::steady_clock::time_point last_stable_time_;
+    mutable std::mutex motion_check_mutex_;
     
     // ROS2 发布者
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_state_pub_;

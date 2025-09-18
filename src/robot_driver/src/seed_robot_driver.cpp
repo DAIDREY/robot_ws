@@ -20,6 +20,9 @@ SeedRobotDriver::SeedRobotDriver(const rclcpp::NodeOptions& options)
     serial_comm_->setStatusCallback(
         std::bind(&SeedRobotDriver::statusCallback, this, std::placeholders::_1));
     
+    // 初始化运动检测变量
+    last_stable_time_ = std::chrono::steady_clock::now();
+    
     // 初始化ROS接口
     initializePublishers();
     initializeSubscribers();
@@ -64,7 +67,7 @@ void SeedRobotDriver::initializeSubscribers()
 {
     trajectory_sub_ = this->create_subscription<trajectory_msgs::msg::JointTrajectory>(
         "joint_trajectory", 10,
-        std::bind(&SeedRobotDriver::jointTrajectoryCallback, this, std::placeholders::_1));
+        std::bind(&SeedRobotDriver::trajectoryCallback, this, std::placeholders::_1));
     
     pose_target_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
         "pose_target", 10,
@@ -74,12 +77,12 @@ void SeedRobotDriver::initializeSubscribers()
 void SeedRobotDriver::initializeServices()
 {
     connect_service_ = this->create_service<std_srvs::srv::Trigger>(
-        "connect", std::bind(&SeedRobotDriver::connectService, this, 
-        std::placeholders::_1, std::placeholders::_2));
+        "connect", std::bind(&SeedRobotDriver::connectServiceCallback, this,
+            std::placeholders::_1, std::placeholders::_2));
     
     disconnect_service_ = this->create_service<std_srvs::srv::Trigger>(
-        "disconnect", std::bind(&SeedRobotDriver::disconnectService, this,
-        std::placeholders::_1, std::placeholders::_2));
+        "disconnect", std::bind(&SeedRobotDriver::disconnectServiceCallback, this,
+            std::placeholders::_1, std::placeholders::_2));
 }
 
 void SeedRobotDriver::initializeTimers()
@@ -141,7 +144,17 @@ bool SeedRobotDriver::moveToPosition(const Position3D& position, const Orientati
         robot_state_ = RobotState::MOVING;
         RCLCPP_INFO(this->get_logger(), "发送直线运动指令: (%.1f, %.1f, %.1f)", 
                    position.x, position.y, position.z);
-        return true;
+        
+        // 等待运动完成
+        if (waitForMotionComplete()) {
+            robot_state_ = RobotState::READY;
+            RCLCPP_INFO(this->get_logger(), "直线运动完成");
+            return true;
+        } else {
+            RCLCPP_WARN(this->get_logger(), "直线运动完成检测超时");
+            robot_state_ = RobotState::READY; // 仍然设为就绪状态
+            return true;
+        }
     } else {
         RCLCPP_ERROR(this->get_logger(), "发送运动指令失败");
         return false;
@@ -162,17 +175,98 @@ bool SeedRobotDriver::moveJoints(const JointAngles& joint_angles, double speed)
     if (serial_comm_->sendJointMove(joint_angles, speed, 0, 1500)) {
         robot_state_ = RobotState::MOVING;
         RCLCPP_INFO(this->get_logger(), "发送关节运动指令");
-        return true;
+        
+        // 等待运动完成
+        if (waitForMotionComplete()) {
+            robot_state_ = RobotState::READY;
+            RCLCPP_INFO(this->get_logger(), "关节运动完成");
+            return true;
+        } else {
+            RCLCPP_WARN(this->get_logger(), "关节运动完成检测超时");
+            robot_state_ = RobotState::READY; // 仍然设为就绪状态
+            return true;
+        }
     } else {
         RCLCPP_ERROR(this->get_logger(), "发送关节运动指令失败");
         return false;
     }
 }
 
+bool SeedRobotDriver::waitForMotionComplete(double timeout_seconds, double position_threshold, double angle_threshold)
+{
+    RCLCPP_INFO(this->get_logger(), "开始运动完成检测，超时: %.1fs", timeout_seconds);
+    
+    auto start_time = std::chrono::steady_clock::now();
+    auto last_check_time = start_time;
+    
+    // 获取初始状态
+    RobotStatus initial_status;
+    {
+        std::lock_guard<std::mutex> lock(status_mutex_);
+        initial_status = current_status_;
+    }
+    
+    RobotStatus last_status = initial_status;
+    auto stable_start_time = start_time;
+    
+    while (std::chrono::duration<double>(std::chrono::steady_clock::now() - start_time).count() < timeout_seconds) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200)); // 200ms检查一次
+        
+        // 每1秒检查一次变化
+        if (std::chrono::duration<double>(std::chrono::steady_clock::now() - last_check_time).count() >= 1.0) {
+            RobotStatus current_status;
+            {
+                std::lock_guard<std::mutex> lock(status_mutex_);
+                current_status = current_status_;
+            }
+            
+            // 检查XYZ变化
+            bool xyz_stable = (std::abs(current_status.x - last_status.x) < position_threshold) &&
+                             (std::abs(current_status.y - last_status.y) < position_threshold) &&
+                             (std::abs(current_status.z - last_status.z) < position_threshold);
+            
+            // 检查关节角度变化
+            bool joints_stable = true;
+            for (int i = 0; i < 6; i++) {
+                if (std::abs(current_status.joint_angles[i] - last_status.joint_angles[i]) > angle_threshold) {
+                    joints_stable = false;
+                    break;
+                }
+            }
+            
+            if (xyz_stable && joints_stable) {
+                // 检查稳定时间是否达到1秒
+                if (std::chrono::duration<double>(std::chrono::steady_clock::now() - stable_start_time).count() >= 1.0) {
+                    RCLCPP_INFO(this->get_logger(), "运动完成（位置稳定超过1秒）");
+                    return true;
+                }
+            } else {
+                // 重新开始稳定计时
+                stable_start_time = std::chrono::steady_clock::now();
+            }
+            
+            last_status = current_status;
+            last_check_time = std::chrono::steady_clock::now();
+        }
+    }
+    
+    RCLCPP_WARN(this->get_logger(), "运动完成检测超时（%.1fs）", timeout_seconds);
+    return false;
+}
+
 void SeedRobotDriver::statusCallback(const RobotStatus& status)
 {
-    std::lock_guard<std::mutex> lock(status_mutex_);
-    current_status_ = status;
+    {
+        std::lock_guard<std::mutex> lock(status_mutex_);
+        current_status_ = status;
+    }
+    
+    // 更新运动检测状态
+    {
+        std::lock_guard<std::mutex> lock(motion_check_mutex_);
+        last_check_status_ = status;
+        last_stable_time_ = std::chrono::steady_clock::now();
+    }
     
     // 根据状态更新机器人状态
     if (robot_state_ == RobotState::CONNECTED) {
@@ -214,7 +308,7 @@ void SeedRobotDriver::publishStatus()
     status_pub_->publish(status_msg);
 }
 
-void SeedRobotDriver::jointTrajectoryCallback(const trajectory_msgs::msg::JointTrajectory::SharedPtr msg)
+void SeedRobotDriver::trajectoryCallback(const trajectory_msgs::msg::JointTrajectory::SharedPtr msg)
 {
     if (msg->points.empty()) return;
     
@@ -239,7 +333,7 @@ void SeedRobotDriver::poseTargetCallback(const geometry_msgs::msg::PoseStamped::
     moveToPosition(position, Orientation(), max_cartesian_velocity_);
 }
 
-void SeedRobotDriver::connectService(
+void SeedRobotDriver::connectServiceCallback(
     const std::shared_ptr<std_srvs::srv::Trigger::Request>,
     std::shared_ptr<std_srvs::srv::Trigger::Response> response)
 {
@@ -247,7 +341,7 @@ void SeedRobotDriver::connectService(
     response->message = response->success ? "连接成功" : "连接失败";
 }
 
-void SeedRobotDriver::disconnectService(
+void SeedRobotDriver::disconnectServiceCallback(
     const std::shared_ptr<std_srvs::srv::Trigger::Request>,
     std::shared_ptr<std_srvs::srv::Trigger::Response> response)
 {
