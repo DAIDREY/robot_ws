@@ -6,21 +6,39 @@ namespace robot_task
 TaskManager::TaskManager() : Node("task_manager")
 {
     // 声明参数
-    this->declare_parameter("pre_grasp_height", 0.15);
+    this->declare_parameter("pre_grasp_height", 0.10);
     this->declare_parameter("grasp_height_offset", 0.02);
+    this->declare_parameter("gripper_length", 0.15);        // 保留夹爪长度偏移
     this->declare_parameter("lift_height", 0.10);
     this->declare_parameter("place_offset_x", 0.2);
     this->declare_parameter("place_offset_y", -0.2);
     this->declare_parameter("place_offset_z", 0.1);
+    this->declare_parameter("wait_time_at_object", 3.0);    // 在物体位置等待3秒
+    
+    // 新增：初始位置参数
+    this->declare_parameter("home_position_x", 0.344);        // 初始位置：机械臂前方30cm
+    this->declare_parameter("home_position_y", 0.0);        // 初始位置：中央
+    this->declare_parameter("home_position_z", 0.417);        // 初始位置：高度50cm
+    this->declare_parameter("home_orientation_roll", 0.0);  // 初始姿态
+    this->declare_parameter("home_orientation_pitch", 0.0);
+    this->declare_parameter("home_orientation_yaw", 0.0);
     
     // 获取参数
     pre_grasp_height_ = this->get_parameter("pre_grasp_height").as_double();
     grasp_height_offset_ = this->get_parameter("grasp_height_offset").as_double();
+    gripper_length_ = this->get_parameter("gripper_length").as_double();
     lift_height_ = this->get_parameter("lift_height").as_double();
     place_offset_x_ = this->get_parameter("place_offset_x").as_double();
     place_offset_y_ = this->get_parameter("place_offset_y").as_double();
     place_offset_z_ = this->get_parameter("place_offset_z").as_double();
+    wait_time_at_object_ = this->get_parameter("wait_time_at_object").as_double();
     
+    home_position_x_ = this->get_parameter("home_position_x").as_double();
+    home_position_y_ = this->get_parameter("home_position_y").as_double();
+    home_position_z_ = this->get_parameter("home_position_z").as_double();
+    home_orientation_roll_ = this->get_parameter("home_orientation_roll").as_double();
+    home_orientation_pitch_ = this->get_parameter("home_orientation_pitch").as_double();
+    home_orientation_yaw_ = this->get_parameter("home_orientation_yaw").as_double();
     // 初始化状态
     task_active_ = false;
     object_detected_ = false;
@@ -39,8 +57,8 @@ TaskManager::TaskManager() : Node("task_manager")
     // 创建发布者
     pose_target_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>(
         "/pose_target", 10);
-    gripper_command_pub_ = this->create_publisher<std_msgs::msg::String>(
-        "/gripper_command", 10);
+    // gripper_command_pub_ = this->create_publisher<std_msgs::msg::String>(
+    //     "/gripper_command", 10);
     status_pub_ = this->create_publisher<robot_task::msg::TaskStatus>(
         "/robot_task/status", 10);
     
@@ -51,6 +69,42 @@ TaskManager::TaskManager() : Node("task_manager")
     
     // 发布初始状态
     publishStatus(0, "系统就绪，等待抓取请求");
+}
+
+geometry_msgs::msg::PoseStamped TaskManager::getHomePosition()
+{
+    geometry_msgs::msg::PoseStamped home_pose;
+    home_pose.header.frame_id = "base_link";
+    home_pose.header.stamp = this->now();
+    
+    // 设置初始位置
+    home_pose.pose.position.x = home_position_x_;
+    home_pose.pose.position.y = home_position_y_;
+    home_pose.pose.position.z = home_position_z_;
+    
+    // 设置初始姿态
+    tf2::Quaternion q;
+    q.setRPY(home_orientation_roll_, home_orientation_pitch_, home_orientation_yaw_);
+    home_pose.pose.orientation = tf2::toMsg(q);
+    
+    return home_pose;
+}
+
+bool TaskManager::moveToHomePosition()
+{
+    RCLCPP_INFO(this->get_logger(), "🏠 移动到初始位置...");
+    
+    auto home_pose = getHomePosition();
+    pose_target_pub_->publish(home_pose);
+    
+    // 等待到达初始位置
+    if (!waitForMotionComplete(8.0)) {
+        RCLCPP_ERROR(this->get_logger(), "移动到初始位置失败");
+        return false;
+    }
+    
+    RCLCPP_INFO(this->get_logger(), "✅ 已到达初始位置");
+    return true;
 }
 
 void TaskManager::graspObjectCallback(
@@ -125,14 +179,40 @@ void TaskManager::objectPoseCallback(const robot_task::msg::ObjectPose::SharedPt
 {
     // 只处理当前目标物体，或者在没有任务时记录所有物体
     if (!task_active_ || msg->object_name == current_target_object_) {
+        // 检查是否是新的物体或位置有显著变化
+        static std::string last_object_name;
+        static geometry_msgs::msg::Point last_position;
+        static double last_rotation_angle;
+        
+        bool should_print = false;
+        
+        // 如果是不同的物体，或者位置/角度变化超过阈值，则打印
+        if (msg->object_name != last_object_name ||
+            std::abs(msg->position.x - last_position.x) > 0.02 ||
+            std::abs(msg->position.y - last_position.y) > 0.02 ||
+            std::abs(msg->position.z - last_position.z) > 0.02 ||
+            std::abs(msg->rotation_angle - last_rotation_angle) > 5.0) {
+            
+            should_print = true;
+            
+            // 更新上次记录的值
+            last_object_name = msg->object_name;
+            last_position = msg->position;
+            last_rotation_angle = msg->rotation_angle;
+        }
+        
+        // 更新物体信息
         latest_object_pose_ = *msg;
         object_detected_ = true;
         
-        RCLCPP_INFO(this->get_logger(), 
-            "收到物体姿态: %s at (%.3f, %.3f, %.3f), 角度: %.1f°, 置信度: %.2f",
-            msg->object_name.c_str(),
-            msg->position.x, msg->position.y, msg->position.z,
-            msg->rotation_angle, msg->confidence);
+        // 只在需要时打印
+        if (should_print) {
+            RCLCPP_INFO(this->get_logger(), 
+                "收到物体姿态: %s at (%.3f, %.3f, %.3f), 角度: %.1f°, 置信度: %.2f",
+                msg->object_name.c_str(),
+                msg->position.x, msg->position.y, msg->position.z,
+                msg->rotation_angle, msg->confidence);
+        }
             
         // 如果正在执行任务且是目标物体，记录日志
         if (task_active_ && msg->object_name == current_target_object_) {
@@ -145,12 +225,15 @@ bool TaskManager::waitForObject(const std::string& object_name, robot_task::msg:
 {
     RCLCPP_INFO(this->get_logger(), "🔍 等待物体出现: %s", object_name.c_str());
     
-    auto start_time = std::chrono::steady_clock::now();
-    const auto timeout = std::chrono::seconds(15);
+    auto start_time = this->now();
+    const auto timeout = rclcpp::Duration::from_seconds(15);
     
+    // 重置检测标志
     object_detected_ = false;
     
-    while (std::chrono::steady_clock::now() - start_time < timeout) {
+    while (rclcpp::ok() && (this->now() - start_time) < timeout) {
+        // 不直接处理消息，依赖 objectPoseCallback 更新变量
+        
         // 检查是否检测到物体
         if (object_detected_ && latest_object_pose_.object_name == object_name) {
             // 检查数据是否足够新
@@ -159,15 +242,25 @@ bool TaskManager::waitForObject(const std::string& object_name, robot_task::msg:
             
             if ((current_time - pose_time).seconds() < 3.0) {
                 pose = latest_object_pose_;
+                RCLCPP_INFO(this->get_logger(), "✅ 找到物体: %s", object_name.c_str());
                 return true;
+            } else {
+                RCLCPP_DEBUG(this->get_logger(), "物体数据已过期，继续等待...");
+                object_detected_ = false; // 重置标志，等待新数据
             }
         }
         
-        // 移除这行：rclcpp::spin_some(this->shared_from_this());
-        // 改为简单的等待
+        // 添加一些调试信息
+        if (object_detected_) {
+            RCLCPP_DEBUG(this->get_logger(), "检测到物体但不是目标: %s", 
+                        latest_object_pose_.object_name.c_str());
+        }
+        
+        // 短暂休眠，避免CPU占用过高
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
     
+    RCLCPP_WARN(this->get_logger(), "等待物体超时: %s", object_name.c_str());
     return false;
 }
 
@@ -177,20 +270,23 @@ geometry_msgs::msg::PoseStamped TaskManager::calculateGraspPose(const robot_task
     grasp_pose.header.frame_id = "base_link";
     grasp_pose.header.stamp = this->now();
     
-    // 位置：物体位置加上高度偏移
+    // 重要：保持15cm夹爪长度的偏移计算
     grasp_pose.pose.position = object_pose.position;
-    grasp_pose.pose.position.z += grasp_height_offset_;
+    grasp_pose.pose.position.z += gripper_length_ + grasp_height_offset_;
     
     // 姿态：根据物体旋转角调整末端执行器角度
-    // 将旋转角从度转换为弧度，并围绕Z轴旋转
     tf2::Quaternion q;
     q.setRPY(0, 0, object_pose.rotation_angle * M_PI / 180.0);
     grasp_pose.pose.orientation = tf2::toMsg(q);
     
     RCLCPP_INFO(this->get_logger(), 
-        "🎯 计算抓取姿态: 位置(%.3f, %.3f, %.3f), 角度%.1f°",
-        grasp_pose.pose.position.x, grasp_pose.pose.position.y, grasp_pose.pose.position.z,
-        object_pose.rotation_angle);
+        "🎯 计算抓取姿态: 目标物体(%.3f, %.3f, %.3f), 机械臂末端(%.3f, %.3f, %.3f)",
+        object_pose.position.x, object_pose.position.y, object_pose.position.z,
+        grasp_pose.pose.position.x, grasp_pose.pose.position.y, grasp_pose.pose.position.z);
+    
+    RCLCPP_INFO(this->get_logger(), 
+        "📏 夹爪偏移: %.2fm (夹爪长度) + %.2fm (安全余量) = %.2fm",
+        gripper_length_, grasp_height_offset_, gripper_length_ + grasp_height_offset_);
     
     return grasp_pose;
 }
@@ -198,59 +294,54 @@ geometry_msgs::msg::PoseStamped TaskManager::calculateGraspPose(const robot_task
 bool TaskManager::executeGraspSequence(const geometry_msgs::msg::PoseStamped& grasp_pose)
 {
     try {
-        RCLCPP_INFO(this->get_logger(), "🚀 开始执行抓取序列...");
+        RCLCPP_INFO(this->get_logger(), "🚀 开始执行抓取序列");
         
-        // 步骤1: 打开夹爪
-        RCLCPP_INFO(this->get_logger(), "📖 步骤1: 打开夹爪");
-        if (!controlGripper("open")) return false;
-        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+        // 步骤1: 移动到初始位置
+        RCLCPP_INFO(this->get_logger(), "🏠 步骤1: 移动到初始位置");
+        if (!moveToHomePosition()) {
+            RCLCPP_ERROR(this->get_logger(), "步骤1失败：无法到达初始位置");
+            return false;
+        }
         
-        // 步骤2: 移动到预抓取位置 (目标位置上方)
+        // 步骤2: 移动到预抓取位置 (目标物体上方)
         RCLCPP_INFO(this->get_logger(), "⬆️ 步骤2: 移动到预抓取位置");
         auto pre_grasp_pose = grasp_pose;
         pre_grasp_pose.pose.position.z += pre_grasp_height_;
         pose_target_pub_->publish(pre_grasp_pose);
-        if (!waitForMotionComplete(8.0)) return false;
+        if (!waitForMotionComplete(8.0)) {
+            RCLCPP_ERROR(this->get_logger(), "步骤2失败：无法到达预抓取位置");
+            return false;
+        }
         
-        // 步骤3: 下降到抓取位置
-        RCLCPP_INFO(this->get_logger(), "⬇️ 步骤3: 下降到抓取位置");
+        // 步骤3: 下降到物体位置
+        RCLCPP_INFO(this->get_logger(), "⬇️ 步骤3: 下降到物体位置");
         pose_target_pub_->publish(grasp_pose);
-        if (!waitForMotionComplete(6.0)) return false;
+        if (!waitForMotionComplete(6.0)) {
+            RCLCPP_ERROR(this->get_logger(), "步骤3失败：无法到达物体位置");
+            return false;
+        }
         
-        // 步骤4: 关闭夹爪抓取物体
-        RCLCPP_INFO(this->get_logger(), "🤏 步骤4: 关闭夹爪");
-        if (!controlGripper("close")) return false;
-        std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+        // 步骤4: 在物体位置等待指定时间
+        RCLCPP_INFO(this->get_logger(), "⏱️ 步骤4: 在物体位置等待 %.1f 秒", wait_time_at_object_);
+        std::this_thread::sleep_for(std::chrono::milliseconds(
+            static_cast<int>(wait_time_at_object_ * 1000)));
+        RCLCPP_INFO(this->get_logger(), "✅ 等待完成，物体位置任务执行完毕");
         
-        // 步骤5: 提升物体
-        RCLCPP_INFO(this->get_logger(), "⬆️ 步骤5: 提升物体");
         auto lift_pose = grasp_pose;
-        lift_pose.pose.position.z += lift_height_;
+        lift_pose.pose.position.z += 0.05;  // 提升5cm
         pose_target_pub_->publish(lift_pose);
-        if (!waitForMotionComplete(6.0)) return false;
+        if (!waitForMotionComplete(4.0)) {
+            RCLCPP_WARN(this->get_logger(), "步骤5警告：提升可能未完成");
+        }
         
-        // 步骤6: 移动到放置位置
-        RCLCPP_INFO(this->get_logger(), "➡️ 步骤6: 移动到放置位置");
-        auto place_pose = lift_pose;
-        place_pose.pose.position.x += place_offset_x_;
-        place_pose.pose.position.y += place_offset_y_;
-        place_pose.pose.position.z = grasp_pose.pose.position.z + place_offset_z_;
-        pose_target_pub_->publish(place_pose);
-        if (!waitForMotionComplete(8.0)) return false;
+        // 步骤6: 返回初始位置
+        RCLCPP_INFO(this->get_logger(), "🏠 步骤6: 返回初始位置");
+        if (!moveToHomePosition()) {
+            RCLCPP_ERROR(this->get_logger(), "步骤6失败：无法返回初始位置");
+            return false;
+        }
         
-        // 步骤7: 打开夹爪释放物体
-        RCLCPP_INFO(this->get_logger(), "📖 步骤7: 释放物体");
-        if (!controlGripper("open")) return false;
-        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
-        
-        // 步骤8: 向上回退一点
-        RCLCPP_INFO(this->get_logger(), "⬆️ 步骤8: 回退机械臂");
-        auto retract_pose = place_pose;
-        retract_pose.pose.position.z += 0.05;  // 向上5cm
-        pose_target_pub_->publish(retract_pose);
-        if (!waitForMotionComplete(4.0)) return false;
-        
-        RCLCPP_INFO(this->get_logger(), "🎉 抓取序列执行完成！");
+        RCLCPP_INFO(this->get_logger(), "🎉 抓取序列执行完成 (无夹爪控制模式)！");
         return true;
         
     } catch (const std::exception& e) {
@@ -259,15 +350,15 @@ bool TaskManager::executeGraspSequence(const geometry_msgs::msg::PoseStamped& gr
     }
 }
 
-bool TaskManager::controlGripper(const std::string& command)
-{
-    std_msgs::msg::String gripper_cmd;
-    gripper_cmd.data = command;
-    gripper_command_pub_->publish(gripper_cmd);
+// bool TaskManager::controlGripper(const std::string& command)
+// {
+//     std_msgs::msg::String gripper_cmd;
+//     gripper_cmd.data = command;
+//     gripper_command_pub_->publish(gripper_cmd);
     
-    RCLCPP_DEBUG(this->get_logger(), "🤏 发送夹爪命令: %s", command.c_str());
-    return true;
-}
+//     RCLCPP_DEBUG(this->get_logger(), "🤏 发送夹爪命令: %s", command.c_str());
+//     return true;
+// }
 
 bool TaskManager::waitForMotionComplete(double timeout_seconds)
 {

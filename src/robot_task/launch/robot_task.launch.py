@@ -42,26 +42,9 @@ def generate_launch_description():
         # 参数声明
         use_sim_time_arg,
         
-        # 启动信息
-        LogInfo(msg='🤖 启动Robot Task节点...'),
-        
         # 任务管理节点
         task_manager_node,
         
         # 启动完成提示
-        LogInfo(msg='✅ Robot Task节点启动完成！'),
-        LogInfo(msg=''),
-        LogInfo(msg='📋 此节点提供以下接口:'),
-        LogInfo(msg='  服务: /grasp_object'),
-        LogInfo(msg='  发布: /robot_task/status'),
-        LogInfo(msg='  订阅: /robot_visioner/center_point'),
-        LogInfo(msg='  发布: /pose_target, /gripper_command'),
-        LogInfo(msg=''),
-        LogInfo(msg='🎯 使用方法:'),
-        LogInfo(msg='  ros2 service call /grasp_object robot_task/srv/GraspObject "{object_name: \'cup\'}"'),
-        LogInfo(msg=''),
-        LogInfo(msg='📊 监控状态:'),
-        LogInfo(msg='  ros2 topic echo /robot_task/status'),
-        LogInfo(msg=''),
-        LogInfo(msg='🔧 系统就绪，等待其他节点和抓取指令...')
+        LogInfo(msg='Robot Task节点启动完成')
     ])
