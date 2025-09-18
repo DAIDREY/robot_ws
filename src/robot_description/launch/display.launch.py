@@ -1,119 +1,95 @@
+#!/usr/bin/env python3
+
 import os
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, Command
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
-from launch import conditions
-from ament_index_python.packages import get_package_share_directory
-
 
 def generate_launch_description():
-    # Get package directory
-    pkg_share = FindPackageShare(package='robot_description').find('robot_description')
+    # 声明launch参数
+    use_sim_time = LaunchConfiguration('use_sim_time', default='false')
+    use_rviz = LaunchConfiguration('use_rviz', default='true')
     
-    # Path to URDF file (修改为直接使用URDF文件)
-    default_model_path = '/home/ubuntu/robot_ws/src/robot_description/urdf/seed_robot.urdf'
-    default_rviz_config_path = os.path.join(pkg_share, '/home/ubuntu/robot_ws/src/robot_description/rviz/urdf_config.rviz')
+    # 获取包路径
+    pkg_path = FindPackageShare(package='robot_description').find('robot_description')
     
-    # Launch configuration variables
-    model = LaunchConfiguration('model')
-    rviz_config = LaunchConfiguration('rvizconfig')
-    use_sim_time = LaunchConfiguration('use_sim_time')
-    use_gui = LaunchConfiguration('gui')
-    use_rviz = LaunchConfiguration('rviz')
+    # URDF文件路径
+    urdf_file = os.path.join(pkg_path, 'urdf', 'seed_robot.urdf.xacro')
     
-    # Declare launch arguments
-    declare_model_cmd = DeclareLaunchArgument(
-        name='model',
-        default_value=default_model_path,
-        description='Absolute path to robot urdf file'
-    )
+    # 处理URDF文件
+    robot_description_content = Command(['xacro ', urdf_file])
     
-    declare_rviz_config_file_cmd = DeclareLaunchArgument(
-        name='rvizconfig',
-        default_value=default_rviz_config_path,
-        description='Absolute path to rviz config file'
-    )
-    
-    declare_use_sim_time_cmd = DeclareLaunchArgument(
-        name='use_sim_time',
-        default_value='false',
-        description='Use simulation (Gazebo) clock if true'
-    )
-    
-    declare_use_gui_cmd = DeclareLaunchArgument(
-        name='gui',
-        default_value='true',
-        description='Flag to enable joint_state_publisher_gui'
-    )
-    
-    declare_use_rviz_cmd = DeclareLaunchArgument(
-        name='rviz',
-        default_value='true',
-        description='Flag to enable RViz'
-    )
-    
-    # 读取URDF文件内容
-    def read_urdf_file(urdf_path):
-        try:
-            with open(urdf_path, 'r') as file:
-                return file.read()
-        except Exception as e:
-            print(f"Error reading URDF file {urdf_path}: {e}")
-            return ""
-    
-    # Robot State Publisher node (修改为直接读取URDF文件)
+    # Robot State Publisher节点
     robot_state_publisher_node = Node(
         package='robot_state_publisher',
         executable='robot_state_publisher',
+        name='robot_state_publisher',
+        output='screen',
         parameters=[{
-            'robot_description': read_urdf_file(default_model_path),
+            'robot_description': robot_description_content,
             'use_sim_time': use_sim_time
         }]
     )
     
-    # Joint State Publisher GUI node
-    joint_state_publisher_gui_node = Node(
-        package='joint_state_publisher_gui',
-        executable='joint_state_publisher_gui',
-        name='joint_state_publisher_gui',
-        condition=conditions.IfCondition(use_gui)
-    )
-    
-    # Joint State Publisher node (fallback when GUI is disabled)
+    # Joint State Publisher节点
     joint_state_publisher_node = Node(
         package='joint_state_publisher',
         executable='joint_state_publisher',
         name='joint_state_publisher',
-        condition=conditions.UnlessCondition(use_gui)
+        output='screen',
+        parameters=[{
+            'use_sim_time': use_sim_time
+        }]
     )
     
-    # RViz node
+    # Joint State Publisher GUI节点（用于手动控制关节）
+    joint_state_publisher_gui_node = Node(
+        package='joint_state_publisher_gui',
+        executable='joint_state_publisher_gui',
+        name='joint_state_publisher_gui',
+        output='screen',
+        condition=LaunchConfigurationEquals('use_rviz', 'true')
+    )
+    
+    # RViz配置文件路径
+    rviz_config_file = os.path.join(pkg_path, '/home/ubuntu/robot_ws/src/robot_description/rviz', 'urdf.rviz')
+    
+    # RViz节点
     rviz_node = Node(
         package='rviz2',
         executable='rviz2',
         name='rviz2',
         output='screen',
-        arguments=['-d', rviz_config],
-        condition=conditions.IfCondition(use_rviz),
-        parameters=[{'use_sim_time': use_sim_time}]
+        # arguments=['-d', rviz_config_file],
+        parameters=[{
+            'use_sim_time': use_sim_time
+        }],
+        condition=LaunchConfigurationEquals('use_rviz', 'true')
     )
     
-    # Create launch description and populate
-    ld = LaunchDescription()
+    # 声明launch参数
+    use_sim_time_arg = DeclareLaunchArgument(
+        'use_sim_time',
+        default_value='false',
+        description='Use simulation (Gazebo) clock if true'
+    )
     
-    # Add launch arguments
-    ld.add_action(declare_model_cmd)
-    ld.add_action(declare_rviz_config_file_cmd)
-    ld.add_action(declare_use_sim_time_cmd)
-    ld.add_action(declare_use_gui_cmd)
-    ld.add_action(declare_use_rviz_cmd)
+    use_rviz_arg = DeclareLaunchArgument(
+        'use_rviz',
+        default_value='true',
+        description='Launch RViz if true'
+    )
     
-    # Add nodes
-    ld.add_action(robot_state_publisher_node)
-    ld.add_action(joint_state_publisher_gui_node)
-    ld.add_action(joint_state_publisher_node)
-    ld.add_action(rviz_node)
-    
-    return ld
+    return LaunchDescription([
+        use_sim_time_arg,
+        use_rviz_arg,
+        robot_state_publisher_node,
+        joint_state_publisher_node,
+        joint_state_publisher_gui_node,
+        rviz_node,
+    ])
+
+# 辅助条件类
+from launch.conditions import LaunchConfigurationEquals
