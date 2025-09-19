@@ -13,7 +13,8 @@ find_package(std_srvs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(trajectory_msgs REQUIRED)
-
+find_package(tf2 REQUIRED)                    
+find_package(tf2_geometry_msgs REQUIRED)
 # 尝试查找libserial (可选)
 find_library(SERIAL_LIBRARY 
     NAMES serial
@@ -56,6 +57,8 @@ ament_target_dependencies(${PROJECT_NAME}_lib
   sensor_msgs
   geometry_msgs
   trajectory_msgs
+  tf2                    
+  tf2_geometry_msgs      
 )
 
 # 链接libserial (如果找到)

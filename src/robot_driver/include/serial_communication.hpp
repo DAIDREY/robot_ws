@@ -65,6 +65,7 @@ struct RobotStatus
     double x, y, z;                    // 当前坐标 (mm)
     double joint_angles[6];            // 关节角度 (度)
     double orientation[3];             // 姿态角 B0, B1, W (度)
+    double roll, pitch, yaw;
     
     // 工作台坐标
     double workspace_origin[3];        // 工作台原点 (mm)
@@ -101,7 +102,7 @@ public:
     // 运动指令发送
     bool sendLinearMove(const Position3D& position, 
                        const Orientation& orientation = Orientation(),
-                       double speed = 100.0, 
+                       double speed = 1000.0, 
                        uint16_t pwm = 1500);
     
     bool sendJointMove(const JointAngles& joint_angles,

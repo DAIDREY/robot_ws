@@ -9,7 +9,7 @@
 #include <robot_task/msg/task_status.hpp>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
-
+#include <atomic>
 #include <memory>
 #include <string>
 #include <map>
@@ -23,7 +23,7 @@ class TaskManager : public rclcpp::Node
 {
 public:
     TaskManager();
-    ~TaskManager() = default;
+    ~TaskManager();
 
 private:
     bool moveToHomePosition();
@@ -55,9 +55,18 @@ private:
     // 等待运动完成 (简单时间延迟)
     bool waitForMotionComplete(double timeout_seconds = 5.0);
 
+    void robotStatusCallback(const std_msgs::msg::String::SharedPtr msg);
+    void initializeStatusSubscription();
+    bool waitForRobotReady(double timeout_seconds = 10.0);
+    std::string parseRobotState(const std::string& status_message);
+    void printRobotStatus();
+    void executeGraspTask(std::string object_name);
+    bool waitForObjectNonBlocking(const std::string& object_name, robot_task::msg::ObjectPose& pose, double timeout_seconds = 15.0);
+
     // ROS接口
     rclcpp::Service<robot_task::srv::GraspObject>::SharedPtr grasp_service_;
     rclcpp::Subscription<robot_task::msg::ObjectPose>::SharedPtr object_pose_sub_;  // 修改为ObjectPose
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr robot_status_sub_;
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pose_target_pub_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr gripper_command_pub_;
     rclcpp::Publisher<robot_task::msg::TaskStatus>::SharedPtr status_pub_;
@@ -67,6 +76,12 @@ private:
     bool object_detected_;
     std::string current_target_object_;
     bool task_active_;
+    std::thread grasp_thread_;
+    std::atomic<bool> grasp_thread_running_;
+    std::string current_robot_state_;
+    std::mutex robot_state_mutex_;
+    std::condition_variable state_change_cv_;
+    bool robot_ready_;
     
     double pre_grasp_height_;      // 预抓取高度偏移
     double grasp_height_offset_;   // 抓取高度偏移  

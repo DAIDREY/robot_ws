@@ -59,6 +59,7 @@ public:
     bool calibrateRobot();
     
     // 运动完成检测
+    
     bool waitForMotionComplete(double timeout_seconds = 20.0, 
                               double position_threshold = 0.1, 
                               double angle_threshold = 0.01);
@@ -75,6 +76,7 @@ private:
     void trajectoryCallback(const trajectory_msgs::msg::JointTrajectory::SharedPtr msg);
     void poseTargetCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg);
     void publishStatus();
+    void checkMotionComplete();
     
     // 服务回调
     void connectServiceCallback(const std_srvs::srv::Trigger::Request::SharedPtr request,
@@ -126,7 +128,8 @@ private:
     
     // ROS2 定时器
     rclcpp::TimerBase::SharedPtr status_timer_;
-    
+    rclcpp::TimerBase::SharedPtr motion_check_timer_;
+
     // 静态常量
     static const std::vector<std::string> JOINT_NAMES;
     static const double DEFAULT_JOINT_TOLERANCE;

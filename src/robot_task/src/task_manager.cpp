@@ -3,8 +3,12 @@
 namespace robot_task
 {
 
-TaskManager::TaskManager() : Node("task_manager")
+TaskManager::TaskManager() : Node("task_manager"), 
+    object_detected_(false), task_active_(false), 
+    current_robot_state_("UNKNOWN"), robot_ready_(false),
+    grasp_thread_running_(false)
 {
+    initializeStatusSubscription();
     // 声明参数
     this->declare_parameter("pre_grasp_height", 0.10);
     this->declare_parameter("grasp_height_offset", 0.02);
@@ -94,12 +98,20 @@ bool TaskManager::moveToHomePosition()
 {
     RCLCPP_INFO(this->get_logger(), "🏠 移动到初始位置...");
     
+    // 显示当前机器人状态
+    {
+        std::lock_guard<std::mutex> lock(robot_state_mutex_);
+        RCLCPP_INFO(this->get_logger(), "📊 发送指令前状态: %s", current_robot_state_.c_str());
+    }
+    
     auto home_pose = getHomePosition();
     pose_target_pub_->publish(home_pose);
     
-    // 等待到达初始位置
-    if (!waitForMotionComplete(8.0)) {
-        RCLCPP_ERROR(this->get_logger(), "移动到初始位置失败");
+    RCLCPP_INFO(this->get_logger(), "📤 初始位置指令已发送");
+    
+    // 使用状态等待
+    if (!waitForRobotReady(15.0)) {  // 增加超时时间到15秒
+        RCLCPP_ERROR(this->get_logger(), "移动到初始位置失败：超时");
         return false;
     }
     
@@ -121,58 +133,27 @@ void TaskManager::graspObjectCallback(
         return;
     }
     
-    // 开始任务
-    task_active_ = true;
-    current_target_object_ = request->object_name;
-    
-    try {
-        publishStatus(1, "正在搜索物体: " + request->object_name);
-        
-        // 等待物体出现
-        robot_task::msg::ObjectPose object_pose;
-        if (!waitForObject(request->object_name, object_pose)) {
-            response->success = false;
-            response->message = "未找到目标物体: " + request->object_name;
-            publishStatus(4, "搜索失败 - 未找到物体");
-            task_active_ = false;
-            return;
-        }
-        
-        RCLCPP_INFO(this->get_logger(), "✅ 找到物体: %s at (%.3f, %.3f, %.3f), 角度: %.1f°",
-                   object_pose.object_name.c_str(),
-                   object_pose.position.x, object_pose.position.y, object_pose.position.z,
-                   object_pose.rotation_angle);
-        
-        publishStatus(2, "开始执行抓取");
-        
-        // 计算抓取姿态
-        auto grasp_pose = calculateGraspPose(object_pose);
-        
-        // 执行抓取
-        if (executeGraspSequence(grasp_pose)) {
-            response->success = true;
-            response->message = "抓取成功完成";
-            response->object_pose = object_pose;
-            publishStatus(3, "抓取完成");
-            RCLCPP_INFO(this->get_logger(), "🎉 抓取任务成功完成!");
-        } else {
-            response->success = false;
-            response->message = "抓取执行失败";
-            publishStatus(4, "执行失败");
-            RCLCPP_ERROR(this->get_logger(), "❌ 抓取执行失败");
-        }
-        
-    } catch (const std::exception& e) {
+    // 检查是否有抓取线程在运行
+    if (grasp_thread_running_) {
         response->success = false;
-        response->message = "抓取过程发生错误: " + std::string(e.what());
-        publishStatus(4, "发生异常错误");
-        RCLCPP_ERROR(this->get_logger(), "💥 抓取过程异常: %s", e.what());
+        response->message = "抓取线程正在运行，请稍后再试";
+        RCLCPP_WARN(this->get_logger(), "⚠️ 抓取线程正在运行，拒绝新请求");
+        return;
     }
     
-    // 重置状态
-    task_active_ = false;
-    current_target_object_.clear();
-    object_detected_ = false;
+    // 立即返回响应，表示请求已接受
+    response->success = true;
+    response->message = "抓取请求已接受，正在异步执行";
+    
+    // 启动异步抓取线程
+    if (grasp_thread_.joinable()) {
+        grasp_thread_.join();  // 等待之前的线程结束
+    }
+    
+    grasp_thread_running_ = true;
+    grasp_thread_ = std::thread(&TaskManager::executeGraspTask, this, request->object_name);
+    
+    RCLCPP_INFO(this->get_logger(), "🚀 异步抓取线程已启动");
 }
 
 void TaskManager::objectPoseCallback(const robot_task::msg::ObjectPose::SharedPtr msg)
@@ -216,36 +197,23 @@ void TaskManager::objectPoseCallback(const robot_task::msg::ObjectPose::SharedPt
             
         // 如果正在执行任务且是目标物体，记录日志
         if (task_active_ && msg->object_name == current_target_object_) {
-            RCLCPP_INFO(this->get_logger(), "🎯 检测到目标物体: %s", msg->object_name.c_str());
+            RCLCPP_DEBUG(this->get_logger(), "🎯 检测到目标物体: %s", msg->object_name.c_str());
         }
     }
 }
 
 bool TaskManager::waitForObject(const std::string& object_name, robot_task::msg::ObjectPose& pose)
 {
-    RCLCPP_INFO(this->get_logger(), "🔍 等待物体出现: %s", object_name.c_str());
-    
-    auto start_time = this->now();
-    const auto timeout = rclcpp::Duration::from_seconds(15);
-    
-    // 注释掉重置检测标志
-    // object_detected_ = false;
-    
-    while (rclcpp::ok() && (this->now() - start_time) < timeout) {
-        // 简化条件检查 - 只检查物体名称匹配
-        if (object_detected_ && latest_object_pose_.object_name == object_name) {
+    // 这个函数现在只是简单的检查，不阻塞
+    if (object_detected_ && latest_object_pose_.object_name == object_name) {
+        auto pose_time = rclcpp::Time(latest_object_pose_.stamp);
+        auto current_time = this->now();
+        
+        if ((current_time - pose_time).seconds() < 3.0) {
             pose = latest_object_pose_;
-            RCLCPP_INFO(this->get_logger(), "✅ 找到物体: %s", object_name.c_str());
             return true;
         }
-        
-        // 处理挂起的ROS回调
-        rclcpp::spin_some(this->get_node_base_interface());
-        
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
-    
-    RCLCPP_WARN(this->get_logger(), "等待物体超时: %s", object_name.c_str());
     return false;
 }
 
@@ -279,10 +247,65 @@ geometry_msgs::msg::PoseStamped TaskManager::calculateGraspPose(const robot_task
     return grasp_pose;
 }
 
+void TaskManager::executeGraspTask(std::string object_name)
+{
+    try {
+        // 开始任务
+        task_active_ = true;
+        current_target_object_ = object_name;
+        
+        publishStatus(1, "正在搜索物体: " + object_name);
+        
+        // 等待物体出现（非阻塞版本）
+        robot_task::msg::ObjectPose object_pose;
+        if (!waitForObjectNonBlocking(object_name, object_pose, 15.0)) {
+            publishStatus(4, "搜索失败 - 未找到物体");
+            task_active_ = false;
+            grasp_thread_running_ = false;
+            RCLCPP_ERROR(this->get_logger(), "❌ 未找到目标物体: %s", object_name.c_str());
+            return;
+        }
+        
+        RCLCPP_INFO(this->get_logger(), "✅ 找到物体: %s at (%.3f, %.3f, %.3f), 角度: %.1f°",
+                   object_pose.object_name.c_str(),
+                   object_pose.position.x, object_pose.position.y, object_pose.position.z,
+                   object_pose.rotation_angle);
+        
+        publishStatus(2, "开始执行抓取");
+        
+        // 计算抓取姿态
+        auto grasp_pose = calculateGraspPose(object_pose);
+        
+        // 执行抓取
+        if (executeGraspSequence(grasp_pose)) {
+            publishStatus(3, "抓取完成");
+            RCLCPP_INFO(this->get_logger(), "🎉 抓取任务成功完成!");
+        } else {
+            publishStatus(4, "抓取执行失败");
+            RCLCPP_ERROR(this->get_logger(), "❌ 抓取执行失败");
+        }
+        
+    } catch (const std::exception& e) {
+        publishStatus(4, "发生异常错误");
+        RCLCPP_ERROR(this->get_logger(), "💥 抓取过程异常: %s", e.what());
+    }
+    
+    // 任务结束
+    task_active_ = false;
+    grasp_thread_running_ = false;
+    RCLCPP_INFO(this->get_logger(), "🏁 抓取线程结束");
+}
+
 bool TaskManager::executeGraspSequence(const geometry_msgs::msg::PoseStamped& grasp_pose)
 {
     try {
         RCLCPP_INFO(this->get_logger(), "🚀 开始执行抓取序列");
+        
+        // 显示当前机器人状态
+        {
+            std::lock_guard<std::mutex> lock(robot_state_mutex_);
+            RCLCPP_INFO(this->get_logger(), "📊 抓取开始前状态: %s", current_robot_state_.c_str());
+        }
         
         // 步骤1: 移动到初始位置
         RCLCPP_INFO(this->get_logger(), "🏠 步骤1: 移动到初始位置");
@@ -295,31 +318,60 @@ bool TaskManager::executeGraspSequence(const geometry_msgs::msg::PoseStamped& gr
         RCLCPP_INFO(this->get_logger(), "⬆️ 步骤2: 移动到预抓取位置");
         auto pre_grasp_pose = grasp_pose;
         pre_grasp_pose.pose.position.z += pre_grasp_height_;
+        
+        RCLCPP_INFO(this->get_logger(), "📍 预抓取位置: (%.3f, %.3f, %.3f)", 
+                   pre_grasp_pose.pose.position.x, 
+                   pre_grasp_pose.pose.position.y, 
+                   pre_grasp_pose.pose.position.z);
+        
         pose_target_pub_->publish(pre_grasp_pose);
-        if (!waitForMotionComplete(8.0)) {
+        RCLCPP_INFO(this->get_logger(), "📤 预抓取位置指令已发送");
+        
+        if (!waitForRobotReady(30.0)) {
             RCLCPP_ERROR(this->get_logger(), "步骤2失败：无法到达预抓取位置");
             return false;
         }
+        RCLCPP_INFO(this->get_logger(), "✅ 步骤2: 已到达预抓取位置");
         
         // 步骤3: 下降到物体位置
         RCLCPP_INFO(this->get_logger(), "⬇️ 步骤3: 下降到物体位置");
+        RCLCPP_INFO(this->get_logger(), "📍 抓取位置: (%.3f, %.3f, %.3f)", 
+                   grasp_pose.pose.position.x, 
+                   grasp_pose.pose.position.y, 
+                   grasp_pose.pose.position.z);
+        
         pose_target_pub_->publish(grasp_pose);
-        if (!waitForMotionComplete(6.0)) {
+        RCLCPP_INFO(this->get_logger(), "📤 抓取位置指令已发送");
+        
+        if (!waitForRobotReady(30.0)) {
             RCLCPP_ERROR(this->get_logger(), "步骤3失败：无法到达物体位置");
             return false;
         }
+        RCLCPP_INFO(this->get_logger(), "✅ 步骤3: 已到达物体位置");
         
         // 步骤4: 在物体位置等待指定时间
         RCLCPP_INFO(this->get_logger(), "⏱️ 步骤4: 在物体位置等待 %.1f 秒", wait_time_at_object_);
         std::this_thread::sleep_for(std::chrono::milliseconds(
             static_cast<int>(wait_time_at_object_ * 1000)));
-        RCLCPP_INFO(this->get_logger(), "✅ 等待完成，物体位置任务执行完毕");
+        RCLCPP_INFO(this->get_logger(), "✅ 步骤4: 等待完成，物体位置任务执行完毕");
         
+        // 步骤5: 提升
+        RCLCPP_INFO(this->get_logger(), "⬆️ 步骤5: 提升物体");
         auto lift_pose = grasp_pose;
         lift_pose.pose.position.z += 0.05;  // 提升5cm
+        
+        RCLCPP_INFO(this->get_logger(), "📍 提升位置: (%.3f, %.3f, %.3f)", 
+                   lift_pose.pose.position.x, 
+                   lift_pose.pose.position.y, 
+                   lift_pose.pose.position.z);
+        
         pose_target_pub_->publish(lift_pose);
-        if (!waitForMotionComplete(4.0)) {
+        RCLCPP_INFO(this->get_logger(), "📤 提升位置指令已发送");
+        
+        if (!waitForRobotReady(30.0)) {
             RCLCPP_WARN(this->get_logger(), "步骤5警告：提升可能未完成");
+        } else {
+            RCLCPP_INFO(this->get_logger(), "✅ 步骤5: 提升完成");
         }
         
         // 步骤6: 返回初始位置
@@ -329,13 +381,73 @@ bool TaskManager::executeGraspSequence(const geometry_msgs::msg::PoseStamped& gr
             return false;
         }
         
-        RCLCPP_INFO(this->get_logger(), "🎉 抓取序列执行完成 (无夹爪控制模式)！");
+        RCLCPP_INFO(this->get_logger(), "🎉 抓取序列执行完成 (状态驱动模式)！");
         return true;
         
     } catch (const std::exception& e) {
         RCLCPP_ERROR(this->get_logger(), "💥 抓取序列执行失败: %s", e.what());
         return false;
     }
+}
+
+bool TaskManager::waitForObjectNonBlocking(const std::string& object_name, robot_task::msg::ObjectPose& pose, double timeout_seconds)
+{
+    RCLCPP_INFO(this->get_logger(), "🔍 等待物体出现: %s (超时: %.1fs)", object_name.c_str(), timeout_seconds);
+    
+    auto start_time = std::chrono::steady_clock::now();
+    auto timeout_duration = std::chrono::duration<double>(timeout_seconds);
+    
+    // 重置检测标志
+    object_detected_ = false;
+    
+    while (grasp_thread_running_) {
+        // 检查超时
+        auto elapsed = std::chrono::steady_clock::now() - start_time;
+        if (elapsed >= timeout_duration) {
+            RCLCPP_WARN(this->get_logger(), "⏰ 等待物体超时: %s", object_name.c_str());
+            return false;
+        }
+        
+        // 检查是否检测到物体
+        if (object_detected_ && latest_object_pose_.object_name == object_name) {
+            // 检查数据是否足够新
+            auto pose_time = rclcpp::Time(latest_object_pose_.stamp);
+            auto current_time = std::chrono::steady_clock::now();
+            auto pose_age = std::chrono::duration<double>(
+                current_time.time_since_epoch()).count() - pose_time.seconds();
+            
+            if (pose_age < 3.0) {
+                pose = latest_object_pose_;
+                RCLCPP_INFO(this->get_logger(), "✅ 找到物体: %s", object_name.c_str());
+                return true;
+            } else {
+                RCLCPP_DEBUG(this->get_logger(), "物体数据已过期(%.1fs)，继续等待...", pose_age);
+                object_detected_ = false; // 重置标志，等待新数据
+            }
+        }
+        
+        // 添加一些调试信息
+        if (object_detected_) {
+            RCLCPP_DEBUG(this->get_logger(), "检测到物体但不是目标: %s (目标: %s)", 
+                        latest_object_pose_.object_name.c_str(), object_name.c_str());
+        }
+        
+        // 短暂休眠，避免CPU占用过高
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        
+        // 每2秒显示一次等待状态
+        static auto last_log_time = std::chrono::steady_clock::now();
+        auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::seconds>(now - last_log_time).count() >= 2) {
+            double remaining = timeout_seconds - std::chrono::duration<double>(elapsed).count();
+            RCLCPP_INFO(this->get_logger(), "🔄 继续等待物体: %s (剩余: %.1fs)", 
+                       object_name.c_str(), remaining);
+            last_log_time = now;
+        }
+    }
+    
+    RCLCPP_WARN(this->get_logger(), "等待物体被中断: %s", object_name.c_str());
+    return false;
 }
 
 // bool TaskManager::controlGripper(const std::string& command)
@@ -350,12 +462,141 @@ bool TaskManager::executeGraspSequence(const geometry_msgs::msg::PoseStamped& gr
 
 bool TaskManager::waitForMotionComplete(double timeout_seconds)
 {
-    // 简化版本：使用时间延迟等待
-    // 实际应用中应该监听机器人状态来确定运动是否完成
-    RCLCPP_DEBUG(this->get_logger(), "⏱️ 等待运动完成... (%.1fs)", timeout_seconds);
-    std::this_thread::sleep_for(std::chrono::milliseconds(
-        static_cast<int>(timeout_seconds * 1000)));
-    return true;
+    // 直接使用基于状态的等待
+    return waitForRobotReady(timeout_seconds);
+}
+
+void TaskManager::initializeStatusSubscription()
+{
+    robot_status_sub_ = this->create_subscription<std_msgs::msg::String>(
+        "/robot_status", 10,
+        std::bind(&TaskManager::robotStatusCallback, this, std::placeholders::_1));
+    
+    RCLCPP_INFO(this->get_logger(), "📡 已订阅机器人状态: /robot_status");
+}
+
+void TaskManager::robotStatusCallback(const std_msgs::msg::String::SharedPtr msg)
+{
+    std::lock_guard<std::mutex> lock(robot_state_mutex_);
+    
+    std::string new_state = parseRobotState(msg->data);
+    
+    if (new_state != current_robot_state_) {
+        RCLCPP_DEBUG(this->get_logger(), "🤖 机器人状态变化: %s -> %s", 
+                    current_robot_state_.c_str(), new_state.c_str());
+        
+        current_robot_state_ = new_state;
+        
+        // 更新ready标志
+        robot_ready_ = (new_state == "READY");
+        
+        // 通知等待的线程
+        state_change_cv_.notify_all();
+    }
+}
+
+std::string TaskManager::parseRobotState(const std::string& status_message)
+{
+    // 解析格式: "State: READY, PWM: 1500, XYZ: (...)"
+    size_t state_pos = status_message.find("State: ");
+    if (state_pos != std::string::npos) {
+        size_t start = state_pos + 7; // "State: "的长度
+        size_t end = status_message.find(",", start);
+        if (end != std::string::npos) {
+            return status_message.substr(start, end - start);
+        }
+    }
+    return "UNKNOWN";
+}
+
+bool TaskManager::waitForRobotReady(double timeout_seconds)
+{
+    RCLCPP_INFO(this->get_logger(), "⏳ 等待机器人运动完成... (超时: %.1fs)", timeout_seconds);
+    
+    std::unique_lock<std::mutex> lock(robot_state_mutex_);
+    
+    auto start_time = std::chrono::steady_clock::now();
+    auto timeout_duration = std::chrono::duration<double>(timeout_seconds);
+    
+    // 阶段1: 先等待一小段时间，让指令生效
+    RCLCPP_DEBUG(this->get_logger(), "🔄 等待指令生效...");
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));  // 500ms让指令生效
+    
+    // 阶段2: 等待开始运动（状态变为MOVING）或直接就绪
+    bool started_moving = false;
+    auto phase1_timeout = std::chrono::seconds(3);  // 最多等3秒开始运动
+    auto phase1_start = std::chrono::steady_clock::now();
+    
+    while (std::chrono::steady_clock::now() - phase1_start < phase1_timeout) {
+        if (current_robot_state_ == "MOVING") {
+            started_moving = true;
+            RCLCPP_DEBUG(this->get_logger(), "🏃 检测到机器人开始运动");
+            break;
+        } else if (current_robot_state_ == "READY") {
+            // 如果已经是READY，可能指令很快完成了，再等待一下确认
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        
+        // 等待状态变化
+        state_change_cv_.wait_for(lock, std::chrono::milliseconds(100));
+        
+        // 检查总超时
+        auto total_elapsed = std::chrono::steady_clock::now() - start_time;
+        if (total_elapsed >= timeout_duration) {
+            RCLCPP_WARN(this->get_logger(), "⏰ 等待运动开始超时! 当前状态: %s", 
+                       current_robot_state_.c_str());
+            return false;
+        }
+    }
+    
+    // 阶段3: 如果检测到运动，等待运动完成（状态变为READY）
+    if (started_moving) {
+        RCLCPP_INFO(this->get_logger(), "⏳ 机器人正在运动，等待完成...");
+        
+        while (current_robot_state_ == "MOVING") {
+            // 等待状态变化
+            if (state_change_cv_.wait_for(lock, std::chrono::milliseconds(200)) == std::cv_status::timeout) {
+                // 显示等待状态（每2秒）
+                static auto last_log_time = std::chrono::steady_clock::now();
+                auto now = std::chrono::steady_clock::now();
+                if (std::chrono::duration_cast<std::chrono::seconds>(now - last_log_time).count() >= 2) {
+                    auto elapsed = std::chrono::duration<double>(now - start_time).count();
+                    RCLCPP_INFO(this->get_logger(), "🔄 运动中... 已用时: %.1fs", elapsed);
+                    last_log_time = now;
+                }
+            }
+            
+            // 检查总超时
+            auto total_elapsed = std::chrono::steady_clock::now() - start_time;
+            if (total_elapsed >= timeout_duration) {
+                RCLCPP_WARN(this->get_logger(), "⏰ 等待运动完成超时! 当前状态: %s", 
+                           current_robot_state_.c_str());
+                return false;
+            }
+        }
+    } else {
+        // 没有检测到运动，可能指令很快完成，添加最小等待时间
+        RCLCPP_INFO(this->get_logger(), "⚡ 未检测到运动状态变化，添加最小等待时间");
+        std::this_thread::sleep_for(std::chrono::milliseconds(1500));  // 最少等1.5秒
+    }
+    
+    // 最终确认是否就绪
+    if (current_robot_state_ == "READY") {
+        auto total_time = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - start_time).count();
+        RCLCPP_INFO(this->get_logger(), "✅ 机器人运动完成! 总用时: %.2fs", total_time);
+        return true;
+    } else {
+        RCLCPP_WARN(this->get_logger(), "❌ 机器人状态异常: %s", current_robot_state_.c_str());
+        return false;
+    }
+}
+
+void TaskManager::printRobotStatus()
+{
+    std::lock_guard<std::mutex> lock(robot_state_mutex_);
+    RCLCPP_INFO(this->get_logger(), "📊 当前机器人状态: %s (Ready: %s)", 
+               current_robot_state_.c_str(), robot_ready_ ? "是" : "否");
 }
 
 void TaskManager::publishStatus(uint8_t status, const std::string& message)
@@ -380,6 +621,15 @@ void TaskManager::publishStatus(uint8_t status, const std::string& message)
     }
     
     RCLCPP_INFO(this->get_logger(), "📊 状态更新 [%s]: %s", status_str.c_str(), message.c_str());
+}
+
+TaskManager::~TaskManager()
+{
+    // 停止抓取线程
+    grasp_thread_running_ = false;
+    if (grasp_thread_.joinable()) {
+        grasp_thread_.join();
+    }
 }
 
 } // namespace robot_task
