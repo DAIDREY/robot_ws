@@ -59,7 +59,7 @@ public:
     bool calibrateRobot();
     
     // 运动完成检测
-    bool waitForMotionComplete(double timeout_seconds = 10.0, 
+    bool waitForMotionComplete(double timeout_seconds = 20.0, 
                               double position_threshold = 0.1, 
                               double angle_threshold = 0.01);
 

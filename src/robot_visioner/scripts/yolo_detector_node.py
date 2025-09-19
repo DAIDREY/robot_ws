@@ -315,11 +315,24 @@ class YOLODetectorNode(Node):
         scores = results.boxes.conf.cpu().numpy()
         classes = results.boxes.cls.cpu().numpy().astype(int)
         
-        self.throttled_log_info(f'🎯 Original detections: {len(boxes)} boxes, scores: {scores.min():.3f}-{scores.max():.3f}')
+        # 检查数组是否为空
+        if len(boxes) == 0 or len(scores) == 0 or len(classes) == 0:
+            self.get_logger().debug('⚠️ 未发现检测结果，返回原始图像')
+            return annotated_image
         
-        # 过滤目标类别
+        self.get_logger().debug(f'🎯 原始检测: {len(boxes)} 个边界框')
+        
+        # 安全地计算min/max，避免空数组错误
+        if len(scores) > 0:
+            self.get_logger().debug(f'得分范围: {scores.min():.3f}-{scores.max():.3f}')
+        
+        # 过滤目标类别时添加检查
         if self.target_classes:
             valid_indices = [i for i, cls in enumerate(classes) if cls in self.target_classes]
+            if len(valid_indices) == 0:
+                self.throttled_log_info('⚠️ 没有物体匹配目标类别')
+                return annotated_image
+                
             boxes = boxes[valid_indices]
             scores = scores[valid_indices]
             classes = classes[valid_indices]
@@ -397,6 +410,9 @@ class YOLODetectorNode(Node):
             return None, annotated_image
         
         masks = results.masks.data.cpu().numpy()
+        if len(masks) == 0:
+            self.throttled_log_info('⚠️ 掩码数组为空')
+            return None, annotated_image
         boxes = results.boxes.xyxy.cpu().numpy() if results.boxes is not None else None
         scores = results.boxes.conf.cpu().numpy() if results.boxes is not None else None
         classes = results.boxes.cls.cpu().numpy().astype(int) if results.boxes is not None else None
@@ -405,7 +421,7 @@ class YOLODetectorNode(Node):
             self.throttled_log_info('⚠️ No class information for masks')
             return None, annotated_image
         
-        self.throttled_log_info(f'🎭 Processing {len(masks)} masks')
+        self.get_logger().debug(f'Processing {len(masks)} masks')
         
         valid_mask_count = 0
         
@@ -446,7 +462,7 @@ class YOLODetectorNode(Node):
         
         if valid_mask_count > 0:
             total_mask_pixels = np.sum(combined_mask > 0)
-            self.throttled_log_info(f'✅ Generated final mask: {valid_mask_count} objects, {total_mask_pixels} pixels')
+            self.get_logger().debug(f'✅ Generated final mask: {valid_mask_count} objects, {total_mask_pixels} pixels')
             return combined_mask, annotated_image
         else:
             self.throttled_log_info('⚠️ No valid masks generated')
@@ -538,11 +554,20 @@ class YOLODetectorNode(Node):
     def image_callback(self, msg):
         """图像消息回调函数"""
         try:
-            # 调试信息
-            self.throttled_log_info(f'📷 Received image: {msg.width}x{msg.height}')
+            # 验证输入图像
+            if msg.width == 0 or msg.height == 0:
+                self.get_logger().error('🚫 接收到尺寸为零的空图像')
+                return
+                
+            self.get_logger().debug(f' 接收图像: {msg.width}x{msg.height}')
             
             # 将ROS图像消息转换为OpenCV格式
             cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
+            
+            # 验证转换后的图像
+            if cv_image.size == 0:
+                self.get_logger().error('🚫 转换后的图像为空')
+                return
             
             # 存储检测结果用于RViz标记
             detections_for_markers = []
@@ -582,6 +607,8 @@ class YOLODetectorNode(Node):
                 
         except Exception as e:
             self.get_logger().error(f'图像处理错误: {str(e)}')
+            import traceback
+            self.get_logger().error(f'堆栈跟踪: {traceback.format_exc()}')
     
     def publish_results(self, detection_image, combined_mask, combined_image, timestamp):
         """发布处理结果"""

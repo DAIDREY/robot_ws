@@ -27,14 +27,11 @@ def generate_launch_description():
                 'pre_grasp_height': 0.15,      # 预抓取高度 (米)
                 'grasp_height_offset': 0.02,   # 抓取高度偏移 (米)
                 'lift_height': 0.10,           # 提升高度 (米)
-                'place_offset_x': 0.2,         # 放置位置X偏移 (米)
-                'place_offset_y': -0.2,        # 放置位置Y偏移 (米)
-                'place_offset_z': 0.1,         # 放置位置Z偏移 (米)
                 'use_sim_time': use_sim_time,
             }
         ],
         output='screen',
-        respawn=True,
+        respawn=False,
         respawn_delay=2.0,
     )
     

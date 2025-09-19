@@ -333,7 +333,7 @@ void RobotVisioner::tryExtractPointCloud()
     if (enable_rgb_color_ && rgb_image_) {
         auto rgb_time = rclcpp::Time(rgb_image_->header.stamp);
         if (std::abs((depth_time - rgb_time).seconds()) > sync_tolerance_) {
-            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+            RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
                                  "深度图和RGB时间戳不同步: %.3f秒差异", 
                                  std::abs((depth_time - rgb_time).seconds()));
             return;
@@ -477,11 +477,11 @@ void RobotVisioner::extractMaskedPointCloud()
         processed_frames_++;
         auto end_time = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-        
-        RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                            "✅ 处理完成: %zu个彩色点 | %zu个中心点 | 耗时: %ldms | 总帧数: %zu",
-                            filtered_cloud->points.size(), center_points.size(), 
-                            duration.count(), processed_frames_);
+
+        RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                    "✅ 处理完成: %zu个彩色点 | %zu个中心点 | 耗时: %ldms | 总帧数: %zu",
+                    filtered_cloud->points.size(), center_points.size(), 
+                    duration.count(), processed_frames_);
         
     } catch (const std::exception& e) {
         RCLCPP_ERROR(this->get_logger(), "💥 点云提取失败: %s", e.what());

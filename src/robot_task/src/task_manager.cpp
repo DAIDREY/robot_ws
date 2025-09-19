@@ -8,7 +8,7 @@ TaskManager::TaskManager() : Node("task_manager")
     // 声明参数
     this->declare_parameter("pre_grasp_height", 0.10);
     this->declare_parameter("grasp_height_offset", 0.02);
-    this->declare_parameter("gripper_length", 0.15);        // 保留夹爪长度偏移
+    this->declare_parameter("gripper_length", 0.08);        // 保留夹爪长度偏移
     this->declare_parameter("lift_height", 0.10);
     this->declare_parameter("place_offset_x", 0.2);
     this->declare_parameter("place_offset_y", -0.2);
@@ -228,35 +228,20 @@ bool TaskManager::waitForObject(const std::string& object_name, robot_task::msg:
     auto start_time = this->now();
     const auto timeout = rclcpp::Duration::from_seconds(15);
     
-    // 重置检测标志
-    object_detected_ = false;
+    // 注释掉重置检测标志
+    // object_detected_ = false;
     
     while (rclcpp::ok() && (this->now() - start_time) < timeout) {
-        // 不直接处理消息，依赖 objectPoseCallback 更新变量
-        
-        // 检查是否检测到物体
+        // 简化条件检查 - 只检查物体名称匹配
         if (object_detected_ && latest_object_pose_.object_name == object_name) {
-            // 检查数据是否足够新
-            auto pose_time = rclcpp::Time(latest_object_pose_.stamp);
-            auto current_time = this->now();
-            
-            if ((current_time - pose_time).seconds() < 3.0) {
-                pose = latest_object_pose_;
-                RCLCPP_INFO(this->get_logger(), "✅ 找到物体: %s", object_name.c_str());
-                return true;
-            } else {
-                RCLCPP_DEBUG(this->get_logger(), "物体数据已过期，继续等待...");
-                object_detected_ = false; // 重置标志，等待新数据
-            }
+            pose = latest_object_pose_;
+            RCLCPP_INFO(this->get_logger(), "✅ 找到物体: %s", object_name.c_str());
+            return true;
         }
         
-        // 添加一些调试信息
-        if (object_detected_) {
-            RCLCPP_DEBUG(this->get_logger(), "检测到物体但不是目标: %s", 
-                        latest_object_pose_.object_name.c_str());
-        }
+        // 处理挂起的ROS回调
+        rclcpp::spin_some(this->get_node_base_interface());
         
-        // 短暂休眠，避免CPU占用过高
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
     
@@ -270,7 +255,6 @@ geometry_msgs::msg::PoseStamped TaskManager::calculateGraspPose(const robot_task
     grasp_pose.header.frame_id = "base_link";
     grasp_pose.header.stamp = this->now();
     
-    // 重要：保持15cm夹爪长度的偏移计算
     grasp_pose.pose.position = object_pose.position;
     grasp_pose.pose.position.z += gripper_length_ + grasp_height_offset_;
     
@@ -287,7 +271,11 @@ geometry_msgs::msg::PoseStamped TaskManager::calculateGraspPose(const robot_task
     RCLCPP_INFO(this->get_logger(), 
         "📏 夹爪偏移: %.2fm (夹爪长度) + %.2fm (安全余量) = %.2fm",
         gripper_length_, grasp_height_offset_, gripper_length_ + grasp_height_offset_);
-    
+        
+    RCLCPP_INFO(this->get_logger(), 
+        "🧭 四元数: x=%.4f, y=%.4f, z=%.4f, w=%.4f",
+        grasp_pose.pose.orientation.x, grasp_pose.pose.orientation.y,
+        grasp_pose.pose.orientation.z, grasp_pose.pose.orientation.w);
     return grasp_pose;
 }
 
