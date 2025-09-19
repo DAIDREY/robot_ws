@@ -221,7 +221,7 @@ class YOLODetectorNode(Node):
         self.camera_info = msg
     
     def calculate_rotation_angle(self, mask):
-        """计算物体的旋转角度"""
+        """计算物体的旋转角度（规范化为-90到90度）"""
         try:
             # 查找轮廓
             contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -240,8 +240,11 @@ class YOLODetectorNode(Node):
             if width < height:
                 angle = angle + 90
             
-            # 标准化角度到[0, 360]范围
-            angle = angle % 360
+            # 规范化角度到[-90, 90]范围
+            while angle > 90:
+                angle -= 180
+            while angle <= -90:
+                angle += 180
             
             return angle, center
             
@@ -406,19 +409,19 @@ class YOLODetectorNode(Node):
         annotated_image = image.copy()
         
         if not hasattr(results, 'masks') or results.masks is None:
-            self.throttled_log_info('⚠️ No segmentation masks found')
+            self.throttled_log_info('No segmentation masks found')
             return None, annotated_image
         
         masks = results.masks.data.cpu().numpy()
         if len(masks) == 0:
-            self.throttled_log_info('⚠️ 掩码数组为空')
+            self.throttled_log_info('掩码数组为空')
             return None, annotated_image
         boxes = results.boxes.xyxy.cpu().numpy() if results.boxes is not None else None
         scores = results.boxes.conf.cpu().numpy() if results.boxes is not None else None
         classes = results.boxes.cls.cpu().numpy().astype(int) if results.boxes is not None else None
         
         if classes is None:
-            self.throttled_log_info('⚠️ No class information for masks')
+            self.throttled_log_info('No class information for masks')
             return None, annotated_image
         
         self.get_logger().debug(f'Processing {len(masks)} masks')

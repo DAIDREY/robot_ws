@@ -1,6 +1,7 @@
 // src/robot_driver/src/seed_robot_driver.cpp
 #include "seed_robot_driver.hpp"
 #include <tf2/LinearMath/Quaternion.h>
+#include <tf2/LinearMath/Matrix3x3.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 namespace robot_driver
 {
@@ -391,7 +392,34 @@ void SeedRobotDriver::poseTargetCallback(const geometry_msgs::msg::PoseStamped::
         msg->pose.position.z * 1000.0
     );
     
-    moveToPosition(position, Orientation(), max_cartesian_velocity_);
+    // 从四元数中提取欧拉角
+    tf2::Quaternion q(
+        msg->pose.orientation.x,
+        msg->pose.orientation.y,
+        msg->pose.orientation.z,
+        msg->pose.orientation.w
+    );
+    
+    double roll, pitch, yaw;
+    tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
+    
+    // 转换为度
+    roll = roll * 180.0 / M_PI;
+    pitch = pitch * 180.0 / M_PI;
+    yaw = yaw * 180.0 / M_PI;
+    
+    // 创建姿态对象，映射到机器人的B0, B1, W轴
+    Orientation orientation(
+        roll,   // B0轴 (Roll)
+        pitch,  // B1轴 (Pitch)  
+        yaw     // W轴 (Yaw) - 这是第6关节!
+    );
+    
+    RCLCPP_INFO(this->get_logger(), 
+        "🎯 接收姿态指令: 位置(%.3f, %.3f, %.3f)mm, 姿态(%.1f°, %.1f°, %.1f°)",
+        position.x, position.y, position.z, roll, pitch, yaw);
+    
+    moveToPosition(position, orientation, max_cartesian_velocity_);
 }
 
 void SeedRobotDriver::connectServiceCallback(

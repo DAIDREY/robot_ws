@@ -687,12 +687,53 @@ void RobotVisioner::publishCenterPoints(const std::vector<CenterPoint3D>& center
                     object_pose.stamp = header.stamp;
                 }
                 
-                object_pose.rotation_angle = static_cast<float>(latest_detection_.rotation_angle);
+                double corrected_rotation_angle = latest_detection_.rotation_angle ;
+
+                // 尝试获取相机到base_link的变换来计算角度偏移
+                try {
+                    geometry_msgs::msg::TransformStamped transform_stamped;
+                    transform_stamped = tf_buffer_->lookupTransform(target_frame_, header.frame_id, 
+                                                                tf2::TimePointZero);
+                    
+                    tf2::Quaternion camera_orientation;
+                    tf2::fromMsg(transform_stamped.transform.rotation, camera_orientation);
+                    
+                    double roll, pitch, yaw;
+                    tf2::Matrix3x3(camera_orientation).getRPY(roll, pitch, yaw);
+                    
+                    // 应用坐标系变换
+                    corrected_rotation_angle = latest_detection_.rotation_angle + (yaw * 180.0 / M_PI);
+                    
+                } catch (const tf2::TransformException& ex) {
+                    RCLCPP_DEBUG(this->get_logger(), "使用原始角度: %s", ex.what());
+                }
+
+                corrected_rotation_angle = fmod(corrected_rotation_angle, 360.0);
+                if (corrected_rotation_angle < 0) {
+                    corrected_rotation_angle += 360.0;
+                }
+                // 步骤2：映射到 -90°~90°
+                if (corrected_rotation_angle > 90.0 && corrected_rotation_angle <= 270.0) {
+                    corrected_rotation_angle -= 180.0;
+                } else if (corrected_rotation_angle > 270.0) {
+                    corrected_rotation_angle -= 360.0;
+                }
+                // 边界保护
+                if (corrected_rotation_angle > 90.0) corrected_rotation_angle = 90.0;
+                if (corrected_rotation_angle < -90.0) corrected_rotation_angle = -90.0;
+
+                object_pose.rotation_angle = static_cast<float>(corrected_rotation_angle);
+
+                RCLCPP_DEBUG(this->get_logger(), 
+                    "📐 角度标准化: %.1f° -> %.1f°",
+                    static_cast<double>(latest_detection_.rotation_angle), corrected_rotation_angle);
+
+                object_pose.rotation_angle = static_cast<float>(corrected_rotation_angle);
                 object_pose.confidence = static_cast<float>(latest_detection_.confidence * best_center.confidence);
                 
                 object_pose_pub_->publish(object_pose);
                 
-                RCLCPP_DEBUG(this->get_logger(), 
+                RCLCPP_INFO(this->get_logger(), 
                     "📤 发布物体姿态(base_link): %s at (%.3f, %.3f, %.3f), 角度: %.1f°, 置信度: %.2f",
                     object_pose.object_name.c_str(),
                     object_pose.position.x, object_pose.position.y, object_pose.position.z,
@@ -803,6 +844,41 @@ bool RobotVisioner::transformPointToBaseLink(const geometry_msgs::msg::PointStam
         return false;
     }
 }
+
+bool RobotVisioner::transformRotationToBaseLink(double camera_angle_deg, 
+                                                const std::string& camera_frame,
+                                                double& base_angle_deg)
+{
+    try {
+        geometry_msgs::msg::TransformStamped transform_stamped;
+        transform_stamped = tf_buffer_->lookupTransform(target_frame_, camera_frame, 
+                                                       tf2::TimePointZero);
+        
+        // 创建方向向量
+        double camera_angle_rad = camera_angle_deg * M_PI / 180.0;
+        tf2::Vector3 direction_camera(cos(camera_angle_rad), sin(camera_angle_rad), 0);
+        
+        // 矩阵变换
+        tf2::Quaternion rotation_quat;
+        tf2::fromMsg(transform_stamped.transform.rotation, rotation_quat);
+        tf2::Matrix3x3 rotation_matrix(rotation_quat);
+        tf2::Vector3 direction_base = rotation_matrix * direction_camera;
+        
+        // 提取角度并标准化到[0, 180]
+        base_angle_deg = atan2(direction_base.y(), direction_base.x()) * 180.0 / M_PI;
+        
+        // 标准化到[0, 180)
+        base_angle_deg = fmod(base_angle_deg + 360.0, 180.0);
+        
+        return true;
+        
+    } catch (const tf2::TransformException& ex) {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+            "变换失败: %s", ex.what());
+        return false;
+    }
+}
+
 
 } // namespace robot_visioner
 

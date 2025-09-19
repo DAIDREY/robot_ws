@@ -100,6 +100,10 @@ private:
 
     bool transformPointToBaseLink(const geometry_msgs::msg::PointStamped& point_in,
                                   geometry_msgs::msg::PointStamped& point_out);
+                                  
+    bool transformRotationToBaseLink(double camera_rotation_angle, 
+                                    const std::string& camera_frame,
+                                    double& base_link_rotation_angle);
 
     // 参数初始化
     void initializeParameters();
