@@ -1,0 +1,25 @@
+moveit_setup_assistant_config:
+  urdf:
+    package: robot_description
+    relative_path: urdf/seed_robot_new.urdf.xacro
+  srdf:
+    relative_path: config/seed_robot.srdf
+  package_settings:
+    author_name: sy
+    author_email: 717001558@qq.com
+    generated_timestamp: 1758454918
+  control_xacro:
+    command:
+      - position
+    state:
+      - position
+      - velocity
+  modified_urdf:
+    xacros:
+      - control_xacro
+  control_xacro:
+    command:
+      - position
+    state:
+      - position
+      - velocity

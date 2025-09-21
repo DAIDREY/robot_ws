@@ -28,6 +28,25 @@ source install/setup.bash
 ros2 launch robot_driver robot_driver.launch.py
 ```
 
+# 手眼标定
+```bash
+conda deactivate
+source install/setup.bash
+ros2 launch easy_handeye2 calibrate.launch.py \
+    name:=seed_robot \
+    calibration_type:=eye_on_base \
+    tracking_base_frame:=camera_color_optical_frame \
+    tracking_marker_frame:=aruco_marker_frame \
+    robot_base_frame:=base_link \
+    robot_effector_frame:=aruco_marker_frame
+```
+
+```bash
+conda deactivate
+source install/setup.bash
+ros2 launch aruco_ros single.launch.py
+```
+
 # 转轴测试指令
 ```bash
 ros2 topic pub /joint_trajectory_controller/joint_trajectory trajectory_msgs/msg/JointTrajectory "
