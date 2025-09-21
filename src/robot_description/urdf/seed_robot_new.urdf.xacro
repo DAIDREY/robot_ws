@@ -1,0 +1,220 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="seed_robot">
+
+  <!-- Properties for common values -->
+  <xacro:property name="package_name" value="robot_description" />
+  <xacro:property name="mass_value" value="7.61667109214929" />
+  <xacro:property name="joint_effort" value="100" />
+  <xacro:property name="joint_velocity" value="1" />
+  
+  <!-- Material definitions -->
+  <xacro:property name="material_color_r" value="0.792156862745098" />
+  <xacro:property name="material_color_g" value="0.819607843137255" />
+  <xacro:property name="material_color_b" value="0.933333333333333" />
+  <xacro:property name="material_color_a" value="1" />
+
+  <!-- Material macro -->
+  <xacro:macro name="default_material">
+    <material name="robot_material">
+      <color rgba="${material_color_r} ${material_color_g} ${material_color_b} ${material_color_a}" />
+    </material>
+  </xacro:macro>
+
+  <!-- Inertial macro -->
+  <xacro:macro name="inertial_block" params="mass origin_xyz origin_rpy ixx ixy ixz iyy iyz izz">
+    <inertial>
+      <origin xyz="${origin_xyz}" rpy="${origin_rpy}" />
+      <mass value="${mass}" />
+      <inertia
+        ixx="${ixx}"
+        ixy="${ixy}"
+        ixz="${ixz}"
+        iyy="${iyy}"
+        iyz="${iyz}"
+        izz="${izz}" />
+    </inertial>
+  </xacro:macro>
+
+  <!-- Link macro -->
+  <xacro:macro name="robot_link" params="link_name mesh_file mass_val origin_xyz origin_rpy ixx ixy ixz iyy iyz izz">
+    <link name="${link_name}">
+      <xacro:inertial_block 
+        mass="${mass_val}"
+        origin_xyz="${origin_xyz}"
+        origin_rpy="${origin_rpy}"
+        ixx="${ixx}" ixy="${ixy}" ixz="${ixz}"
+        iyy="${iyy}" iyz="${iyz}" izz="${izz}" />
+      
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://${package_name}/meshes/${mesh_file}" />
+        </geometry>
+        <xacro:default_material />
+      </visual>
+      
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://${package_name}/meshes/${mesh_file}" />
+        </geometry>
+      </collision>
+    </link>
+  </xacro:macro>
+
+  <!-- Joint macro -->
+  <xacro:macro name="robot_joint" params="joint_name joint_type parent_link child_link origin_xyz origin_rpy axis_xyz lower upper">
+    <joint name="${joint_name}" type="${joint_type}">
+      <origin xyz="${origin_xyz}" rpy="${origin_rpy}" />
+      <parent link="${parent_link}" />
+      <child link="${child_link}" />
+      <axis xyz="${axis_xyz}" />
+      <xacro:unless value="${joint_type == 'continuous'}">
+        <limit
+          lower="${lower}"
+          upper="${upper}"
+          effort="${joint_effort}"
+          velocity="${joint_velocity}" />
+      </xacro:unless>
+      <xacro:if value="${joint_type == 'continuous'}">
+        <limit
+          lower="${lower}"
+          upper="${upper}"
+          effort="${joint_effort}"
+          velocity="${joint_velocity}" />
+      </xacro:if>
+    </joint>
+  </xacro:macro>
+
+  <!-- Robot links -->
+  <xacro:robot_link 
+    link_name="base_link"
+    mesh_file="base_link.STL"
+    mass_val="${mass_value}"
+    origin_xyz="0.0120968458973797 -0.00203607896625726 0.315529736934639"
+    origin_rpy="0 0 0"
+    ixx="0.334397875526828" ixy="-0.000619243111916243" ixz="-0.0124371358670975"
+    iyy="0.37653890865285" iyz="0.000468399889260862" izz="0.0751972894630239" />
+
+  <xacro:robot_link 
+    link_name="link1"
+    mesh_file="link1.STL"
+    mass_val="${mass_value}"
+    origin_xyz="0.0120955412464027 -0.00204381510376043 0.196529736934639"
+    origin_rpy="0 0 0"
+    ixx="0.33439710068825" ixy="-0.000592291256984031" ixz="-0.0124368337577688"
+    iyy="0.376539683491428" iyz="0.000476353980278125" izz="0.0751972894630239" />
+
+  <xacro:robot_link 
+    link_name="link2"
+    mesh_file="link2.STL"
+    mass_val="${mass_value}"
+    origin_xyz="0.104616490901365 -0.00899708578978953 0.00204010170144135"
+    origin_rpy="0 0 0"
+    ixx="0.137363577630575" ixy="0.111371199528998" ixz="-0.000693873138791329"
+    iyy="0.272231180156892" iyz="-0.000328834544698038" izz="0.376539315855235" />
+
+  <xacro:robot_link 
+    link_name="link3"
+    mesh_file="link3.STL"
+    mass_val="${mass_value}"
+    origin_xyz="0.148229202660645 -0.0844961017092889 -0.00204010170144133"
+    origin_rpy="0 0 0"
+    ixx="0.0751972894630239" ixy="-0.0124369794113784" ixz="-0.000472535875732812"
+    iyy="0.334397468324443" iyz="0.000605228830004265" izz="0.376539315855235" />
+
+  <xacro:robot_link 
+    link_name="link4"
+    mesh_file="link4.STL"
+    mass_val="${mass_value}"
+    origin_xyz="-0.00204010170144433 -0.245229202660637 0.0619960695270931"
+    origin_rpy="0 0 0"
+    ixx="0.376539315855235" ixy="0.000472535875732476" ixz="-0.000605228830004285"
+    iyy="0.0751972894630239" iyz="-0.0124369794113784" izz="0.334397468324443" />
+
+  <xacro:robot_link 
+    link_name="link5"
+    mesh_file="link5.STL"
+    mass_val="${mass_value}"
+    origin_xyz="-0.192003898290704 0.245229202660642 -0.00204010170144427"
+    origin_rpy="0 0 0"
+    ixx="0.334397468324443" ixy="0.0124369794113784" ixz="-0.000605228830004291"
+    iyy="0.0751972894630239" iyz="-0.000472535875732474" izz="0.376539315855235" />
+
+  <xacro:robot_link 
+    link_name="link6"
+    mesh_file="link6.STL"
+    mass_val="${mass_value}"
+    origin_xyz="-0.19200320923081 -0.00210395314636769 -0.154229202660633"
+    origin_rpy="0 0 0"
+    ixx="0.334397875526828" ixy="-0.000619243111916238" ixz="-0.0124371358670975"
+    iyy="0.37653890865285" iyz="0.000468399889260976" izz="0.0751972894630239" />
+
+  <!-- Robot joints -->
+  <xacro:robot_joint 
+    joint_name="joint1"
+    joint_type="revolute"
+    parent_link="base_link"
+    child_link="link1"
+    origin_xyz="0 0 0.119"
+    origin_rpy="0 0 0.00063955"
+    axis_xyz="0 0 1"
+    lower="-2.627"
+    upper="2.627" />
+
+  <xacro:robot_joint 
+    joint_name="joint2"
+    joint_type="revolute"
+    parent_link="link1"
+    child_link="link2"
+    origin_xyz="0.051 -1.5657E-05 0.099"
+    origin_rpy="-1.5708 -1.629 3.1413"
+    axis_xyz="0 0 -1"
+    lower="-1.919"     
+    upper="1.134" />
+
+  <xacro:robot_joint 
+    joint_name="joint3"
+    joint_type="continuous"
+    parent_link="link2"
+    child_link="link3"
+    origin_xyz="0.275 0 0"
+    origin_rpy="-3.1416 0 1.28"
+    axis_xyz="0 0 -1"
+    lower="0.47123889803846897"
+    upper="3.2812189937493397" />
+
+  <xacro:robot_joint 
+    joint_name="joint4"
+    joint_type="revolute"
+    parent_link="link3"
+    child_link="link4"
+    origin_xyz="-0.097 -0.0225 0"
+    origin_rpy="1.5708 -1.5708 0"
+    axis_xyz="0 0 1"
+    lower="-2.914"
+    upper="2.914" />
+
+  <xacro:robot_joint 
+    joint_name="joint5"
+    joint_type="revolute"
+    parent_link="link4"
+    child_link="link5"
+    origin_xyz="0 0 0.254"
+    origin_rpy="0 -1.5708 3.1416"
+    axis_xyz="0 0 -1"
+    lower="-0.593"
+    upper="3.63" />
+
+  <xacro:robot_joint 
+    joint_name="joint6"
+    joint_type="revolute"
+    parent_link="link5"
+    child_link="link6"
+    origin_xyz="0 0.091 0"
+    origin_rpy="1.5708 0.00033255 0"
+    axis_xyz="0 0 1"
+    lower="-3.14"
+    upper="3.14" />
+
+</robot>

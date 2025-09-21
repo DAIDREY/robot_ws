@@ -16,7 +16,7 @@ def generate_launch_description():
     pkg_path = FindPackageShare(package='robot_description').find('robot_description')
     
     # URDF文件路径
-    urdf_file = os.path.join(pkg_path, 'urdf', 'seed_robot.urdf.xacro')
+    urdf_file = os.path.join(pkg_path, 'urdf', 'seed_robot_new.urdf.xacro')
     
     # 处理URDF文件
     robot_description_content = Command(['xacro ', urdf_file])
@@ -33,25 +33,24 @@ def generate_launch_description():
         }]
     )
     
-    # Joint State Publisher节点
-    joint_state_publisher_node = Node(
-        package='joint_state_publisher',
-        executable='joint_state_publisher',
-        name='joint_state_publisher',
-        output='screen',
-        parameters=[{
-            'use_sim_time': use_sim_time
-        }]
-    )
+    # joint_state_publisher_node = Node(
+    #     package='joint_state_publisher',
+    #     executable='joint_state_publisher',
+    #     name='joint_state_publisher',
+    #     output='screen',
+    #     parameters=[{
+    #         'use_sim_time': use_sim_time
+    #     }]
+    # )
     
-    # Joint State Publisher GUI节点（用于手动控制关节）
-    joint_state_publisher_gui_node = Node(
-        package='joint_state_publisher_gui',
-        executable='joint_state_publisher_gui',
-        name='joint_state_publisher_gui',
-        output='screen',
-        condition=LaunchConfigurationEquals('use_rviz', 'true')
-    )
+    # # Joint State Publisher GUI节点（用于手动控制关节）
+    # joint_state_publisher_gui_node = Node(
+    #     package='joint_state_publisher_gui',
+    #     executable='joint_state_publisher_gui',
+    #     name='joint_state_publisher_gui',
+    #     output='screen',
+    #     condition=LaunchConfigurationEquals('use_rviz', 'true')
+    # )
     
     # RViz配置文件路径
     rviz_config_file = os.path.join(pkg_path, '/home/ubuntu/robot_ws/src/robot_description/rviz', 'urdf.rviz')
@@ -86,8 +85,8 @@ def generate_launch_description():
         use_sim_time_arg,
         use_rviz_arg,
         robot_state_publisher_node,
-        joint_state_publisher_node,
-        joint_state_publisher_gui_node,
+        # joint_state_publisher_node,
+        # joint_state_publisher_gui_node,
         rviz_node,
     ])
 
