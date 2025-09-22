@@ -110,6 +110,12 @@ void RobotVisioner::initializeParameters()
     
     this->declare_parameter("target_frame", "base_link");        // 目标坐标系
     this->declare_parameter("source_frame", "camera_link");  // 源坐标系
+
+    this->declare_parameter("position_offset_x", 0.0);    // X方向偏移 (前后方向)
+    this->declare_parameter("position_offset_y", 0.0);    // Y方向偏移 (左右方向)
+    this->declare_parameter("position_offset_z", 0.0);    // Z方向偏移 (上下方向)
+    this->declare_parameter("enable_position_offset", true);  // 是否启用偏移
+
     // 获取参数值
     depth_scale_ = this->get_parameter("depth_scale").as_double();
     mask_threshold_ = this->get_parameter("mask_threshold").as_int();
@@ -194,7 +200,7 @@ void RobotVisioner::cameraInfoCallback(const sensor_msgs::msg::CameraInfo::Share
     cy_ = msg->k[5];  // K[5]
     
     camera_info_received_ = true;
-    RCLCPP_INFO_ONCE(this->get_logger(), "📸 相机内参已更新: fx=%.2f, fy=%.2f, cx=%.2f, cy=%.2f", 
+    RCLCPP_INFO_ONCE(this->get_logger(), "相机内参: fx=%.2f, fy=%.2f, cx=%.2f, cy=%.2f", 
                      fx_, fy_, cx_, cy_);
 }
 
@@ -208,7 +214,7 @@ void RobotVisioner::detectionInfoCallback(const std_msgs::msg::String::SharedPtr
         latest_detection_ = info;
         
         RCLCPP_DEBUG(this->get_logger(), 
-            "🎯 收到检测信息: %s, 角度: %.1f°, 置信度: %.2f",
+            "收到检测信息: %s, 角度: %.1f°, 置信度: %.2f",
             info.object_name.c_str(), info.rotation_angle, info.confidence);
     } else {
         RCLCPP_WARN(this->get_logger(), "解析检测信息失败: %s", msg->data.c_str());
@@ -687,25 +693,24 @@ void RobotVisioner::publishCenterPoints(const std::vector<CenterPoint3D>& center
                     object_pose.stamp = header.stamp;
                 }
                 
-                double corrected_rotation_angle = latest_detection_.rotation_angle ;
-
-                // 尝试获取相机到base_link的变换来计算角度偏移
-                try {
-                    geometry_msgs::msg::TransformStamped transform_stamped;
-                    transform_stamped = tf_buffer_->lookupTransform(target_frame_, header.frame_id, 
-                                                                tf2::TimePointZero);
+                double corrected_rotation_angle = 0.0;
+                if (transformRotationToBaseLink(latest_detection_.rotation_angle, 
+                                              header.frame_id, 
+                                              corrected_rotation_angle)) {
+                    // 变换成功，记录变换过程用于调试
+                    RCLCPP_DEBUG(this->get_logger(), 
+                        "📐 角度变换: %.1f° (相机:%s) -> %.1f° (机械臂:%s)",
+                        static_cast<double>(latest_detection_.rotation_angle), 
+                        header.frame_id.c_str(),
+                        corrected_rotation_angle, 
+                        target_frame_.c_str());
+                } else {
+                    // 变换失败时的备选策略
+                    corrected_rotation_angle = static_cast<double>(latest_detection_.rotation_angle);
                     
-                    tf2::Quaternion camera_orientation;
-                    tf2::fromMsg(transform_stamped.transform.rotation, camera_orientation);
-                    
-                    double roll, pitch, yaw;
-                    tf2::Matrix3x3(camera_orientation).getRPY(roll, pitch, yaw);
-                    
-                    // 应用坐标系变换
-                    corrected_rotation_angle = latest_detection_.rotation_angle + (yaw * 180.0 / M_PI);
-                    
-                } catch (const tf2::TransformException& ex) {
-                    RCLCPP_DEBUG(this->get_logger(), "使用原始角度: %s", ex.what());
+                    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                        "⚠️  角度变换失败，使用原始角度: %.1f°。请检查TF树连接。",
+                        corrected_rotation_angle);
                 }
 
                 corrected_rotation_angle = fmod(corrected_rotation_angle, 360.0);
@@ -733,8 +738,8 @@ void RobotVisioner::publishCenterPoints(const std::vector<CenterPoint3D>& center
                 
                 object_pose_pub_->publish(object_pose);
                 
-                RCLCPP_INFO(this->get_logger(), 
-                    "📤 发布物体姿态(base_link): %s at (%.3f, %.3f, %.3f), 角度: %.1f°, 置信度: %.2f",
+                RCLCPP_DEBUG(this->get_logger(), 
+                    " 发布物体姿态(base_link): %s at (%.3f, %.3f, %.3f), 角度: %.1f°, 置信度: %.2f",
                     object_pose.object_name.c_str(),
                     object_pose.position.x, object_pose.position.y, object_pose.position.z,
                     object_pose.rotation_angle, object_pose.confidence);
@@ -850,31 +855,39 @@ bool RobotVisioner::transformRotationToBaseLink(double camera_angle_deg,
                                                 double& base_angle_deg)
 {
     try {
+        // 获取从相机到机械臂坐标系的变换
         geometry_msgs::msg::TransformStamped transform_stamped;
-        transform_stamped = tf_buffer_->lookupTransform(target_frame_, camera_frame, 
-                                                       tf2::TimePointZero);
+        transform_stamped = tf_buffer_->lookupTransform(
+            target_frame_,        // 目标: base_link
+            camera_frame,         // 源: camera_depth_optical_frame
+            tf2::TimePointZero    // 最新变换
+        );
         
-        // 创建方向向量
+        // 创建相机坐标系下的方向向量
         double camera_angle_rad = camera_angle_deg * M_PI / 180.0;
         tf2::Vector3 direction_camera(cos(camera_angle_rad), sin(camera_angle_rad), 0);
         
-        // 矩阵变换
+        // 应用旋转变换
         tf2::Quaternion rotation_quat;
         tf2::fromMsg(transform_stamped.transform.rotation, rotation_quat);
         tf2::Matrix3x3 rotation_matrix(rotation_quat);
         tf2::Vector3 direction_base = rotation_matrix * direction_camera;
         
-        // 提取角度并标准化到[0, 180]
+        // 提取变换后的角度
         base_angle_deg = atan2(direction_base.y(), direction_base.x()) * 180.0 / M_PI;
         
-        // 标准化到[0, 180)
-        base_angle_deg = fmod(base_angle_deg + 360.0, 180.0);
+        // 添加详细的调试信息
+        RCLCPP_DEBUG(this->get_logger(), 
+            "🔄 方向向量变换: (%.3f,%.3f) -> (%.3f,%.3f), 角度: %.1f° -> %.1f°",
+            direction_camera.x(), direction_camera.y(),
+            direction_base.x(), direction_base.y(),
+            camera_angle_deg, base_angle_deg);
         
         return true;
         
     } catch (const tf2::TransformException& ex) {
         RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-            "变换失败: %s", ex.what());
+            "TF变换失败: %s", ex.what());
         return false;
     }
 }

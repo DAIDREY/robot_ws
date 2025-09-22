@@ -9,7 +9,7 @@ TaskManager::TaskManager() : Node("task_manager"),
     robot_ready_(false)
 {
     initializeStatusSubscription();
-    this->declare_parameter("use_motion_planner", true);         // 是否使用motion_planner
+    this->declare_parameter("use_motion_planner", false);         // 是否使用motion_planner
     this->declare_parameter("approach_distance", 0.1);          // 接近距离
     this->declare_parameter("retreat_distance", 0.05);          // 后退距离
     this->declare_parameter("max_trajectory_points", 100);      // 最大轨迹点数
@@ -243,21 +243,37 @@ geometry_msgs::msg::PoseStamped TaskManager::calculateGraspPose(const robot_task
     grasp_pose.header.frame_id = "base_link";
     grasp_pose.header.stamp = this->now();
     
-    // 设置位置
+    // 设置位置（保持原有逻辑不变）
     grasp_pose.pose.position = object_pose.position;
     grasp_pose.pose.position.z += gripper_length_ + grasp_height_offset_;
     
-    double compensated_angle = static_cast<double>(object_pose.rotation_angle) ;
-    double grasp_angle_rad = compensated_angle * M_PI / 180.0;
+    // 获取物体角度（已经过正确的坐标变换）
+    double object_angle_deg = static_cast<double>(object_pose.rotation_angle);
     
-    // 设置姿态
+    // 计算垂直抓取角度：简单地加90度
+    double grasp_angle_deg = object_angle_deg + 90.0;
+    
+    // 角度标准化到[-90, 90]范围（利用夹爪对称性）
+    while (grasp_angle_deg > 90.0) {
+        grasp_angle_deg -= 180.0;  // 利用180度对称性
+    }
+    while (grasp_angle_deg <= -90.0) {
+        grasp_angle_deg += 180.0;  // 利用180度对称性
+    }
+    
+    // 转换为弧度用于姿态计算
+    double grasp_angle_rad = grasp_angle_deg * M_PI / 180.0;
+    
+    // 设置机械臂末端执行器的目标姿态
     tf2::Quaternion q;
-    q.setRPY(0, 0, grasp_angle_rad);
+    q.setRPY(0, 0, grasp_angle_rad);  // Roll=0, Pitch=0, Yaw=抓取角度
     grasp_pose.pose.orientation = tf2::toMsg(q);
     
+    // 输出清晰的调试信息，帮助理解抓取策略
     RCLCPP_INFO(this->get_logger(), 
-        "抓取姿态: 角度%.1f° (%.3f弧度)",
-        static_cast<double>(object_pose.rotation_angle), grasp_angle_rad);
+        "📐 抓取策略: 物体朝向 %.1f° → 垂直抓取 %.1f° (%.3f弧度)",
+        object_angle_deg, grasp_angle_deg, grasp_angle_rad);
+    
     return grasp_pose;
 }
 

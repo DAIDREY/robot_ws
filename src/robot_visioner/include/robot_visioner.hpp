@@ -167,6 +167,10 @@ private:
     size_t processed_frames_;
     rclcpp::Time last_process_time_;
     
+    double position_offset_x_;    // X方向偏移量 (米)
+    double position_offset_y_;    // Y方向偏移量 (米) 
+    double position_offset_z_;    // Z方向偏移量 (米)
+    bool enable_position_offset_;
 };
 
 } // namespace robot_visioner
