@@ -409,7 +409,6 @@ class YOLODetectorNode(Node):
         annotated_image = image.copy()
         
         if not hasattr(results, 'masks') or results.masks is None:
-            self.throttled_log_info('No segmentation masks found')
             return None, annotated_image
         
         masks = results.masks.data.cpu().numpy()

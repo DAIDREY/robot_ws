@@ -144,6 +144,11 @@ void RobotVisioner::initializeParameters()
     frame_id_ = this->get_parameter("frame_id").as_string();
     target_frame_ = this->get_parameter("target_frame").as_string();
     source_frame_ = this->get_parameter("source_frame").as_string();
+
+    position_offset_x_ = this->get_parameter("position_offset_x").as_double();
+    position_offset_y_ = this->get_parameter("position_offset_y").as_double();
+    position_offset_z_ = this->get_parameter("position_offset_z").as_double();
+    enable_position_offset_ = this->get_parameter("enable_position_offset").as_bool();
     
 }
 
@@ -648,7 +653,7 @@ void RobotVisioner::publishCenterPoints(const std::vector<CenterPoint3D>& center
     
     // 创建相机坐标系下的点
     geometry_msgs::msg::PointStamped camera_point;
-    camera_point.header = header;  // 使用原始的相机坐标系
+    camera_point.header = header;
     camera_point.point.x = best_center.x;
     camera_point.point.y = best_center.y;
     camera_point.point.z = best_center.z;
@@ -669,7 +674,7 @@ void RobotVisioner::publishCenterPoints(const std::vector<CenterPoint3D>& center
         center_point_pub_->publish(camera_point);
     }
     
-    // 发布ObjectPose消息（也转换到base_link） - 在现有的ObjectPose发布部分修改：
+    // 发布ObjectPose消息（也转换到base_link）
     {
         std::lock_guard<std::mutex> lock(detection_mutex_);
         
@@ -681,9 +686,34 @@ void RobotVisioner::publishCenterPoints(const std::vector<CenterPoint3D>& center
                 
                 // 使用base_link坐标系的位置
                 if (transformPointToBaseLink(camera_point, base_link_point)) {
-                    object_pose.position.x = base_link_point.point.x;
-                    object_pose.position.y = base_link_point.point.y;
-                    object_pose.position.z = base_link_point.point.z;
+                    // 获取变换后的原始坐标
+                    double raw_x = base_link_point.point.x;
+                    double raw_y = base_link_point.point.y;
+                    double raw_z = base_link_point.point.z;
+                    
+                    // 应用位置偏移
+                    if (enable_position_offset_) {
+                        object_pose.position.x = raw_x + position_offset_x_;
+                        object_pose.position.y = raw_y + position_offset_y_;
+                        object_pose.position.z = raw_z + position_offset_z_;
+                        
+                        RCLCPP_DEBUG(this->get_logger(), 
+                            "📐 位置偏移: 原始(%.3f,%.3f,%.3f) → 偏移后(%.3f,%.3f,%.3f)",
+                            raw_x, raw_y, raw_z,
+                            object_pose.position.x, object_pose.position.y, object_pose.position.z);
+                        
+                        static int offset_log_counter = 0;
+                        if (++offset_log_counter % 10 == 0) {
+                            RCLCPP_DEBUG(this->get_logger(), 
+                                "🎯 位置偏移: (%.3f,%.3f,%.3f)",
+                                position_offset_x_, position_offset_y_, position_offset_z_);
+                        }
+                    } else {
+                        object_pose.position.x = raw_x;
+                        object_pose.position.y = raw_y;
+                        object_pose.position.z = raw_z;
+                    }
+                    
                     object_pose.stamp = base_link_point.header.stamp;
                 } else {
                     // 变换失败时使用相机坐标系
@@ -691,13 +721,17 @@ void RobotVisioner::publishCenterPoints(const std::vector<CenterPoint3D>& center
                     object_pose.position.y = best_center.y;
                     object_pose.position.z = best_center.z;
                     object_pose.stamp = header.stamp;
+                    
+                    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                        "⚠️ TF变换失败，跳过位置偏移");
                 }
                 
                 double corrected_rotation_angle = 0.0;
+
+                // 角度变换
                 if (transformRotationToBaseLink(latest_detection_.rotation_angle, 
                                               header.frame_id, 
                                               corrected_rotation_angle)) {
-                    // 变换成功，记录变换过程用于调试
                     RCLCPP_DEBUG(this->get_logger(), 
                         "📐 角度变换: %.1f° (相机:%s) -> %.1f° (机械臂:%s)",
                         static_cast<double>(latest_detection_.rotation_angle), 
@@ -709,37 +743,35 @@ void RobotVisioner::publishCenterPoints(const std::vector<CenterPoint3D>& center
                     corrected_rotation_angle = static_cast<double>(latest_detection_.rotation_angle);
                     
                     RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
-                        "⚠️  角度变换失败，使用原始角度: %.1f°。请检查TF树连接。",
+                        "⚠️ 角度变换失败，使用原始角度: %.1f°",
                         corrected_rotation_angle);
                 }
 
+                // 角度标准化到[-90, 90]范围
                 corrected_rotation_angle = fmod(corrected_rotation_angle, 360.0);
                 if (corrected_rotation_angle < 0) {
                     corrected_rotation_angle += 360.0;
                 }
-                // 步骤2：映射到 -90°~90°
+                
+                // 映射到 -90°~90°
                 if (corrected_rotation_angle > 90.0 && corrected_rotation_angle <= 270.0) {
                     corrected_rotation_angle -= 180.0;
                 } else if (corrected_rotation_angle > 270.0) {
                     corrected_rotation_angle -= 360.0;
                 }
+                
                 // 边界保护
                 if (corrected_rotation_angle > 90.0) corrected_rotation_angle = 90.0;
                 if (corrected_rotation_angle < -90.0) corrected_rotation_angle = -90.0;
 
                 object_pose.rotation_angle = static_cast<float>(corrected_rotation_angle);
-
-                RCLCPP_DEBUG(this->get_logger(), 
-                    "📐 角度标准化: %.1f° -> %.1f°",
-                    static_cast<double>(latest_detection_.rotation_angle), corrected_rotation_angle);
-
                 object_pose.rotation_angle = static_cast<float>(corrected_rotation_angle);
                 object_pose.confidence = static_cast<float>(latest_detection_.confidence * best_center.confidence);
                 
                 object_pose_pub_->publish(object_pose);
                 
                 RCLCPP_DEBUG(this->get_logger(), 
-                    " 发布物体姿态(base_link): %s at (%.3f, %.3f, %.3f), 角度: %.1f°, 置信度: %.2f",
+                    "📤 发布物体姿态: %s at (%.3f, %.3f, %.3f), 角度: %.1f°, 置信度: %.2f",
                     object_pose.object_name.c_str(),
                     object_pose.position.x, object_pose.position.y, object_pose.position.z,
                     object_pose.rotation_angle, object_pose.confidence);

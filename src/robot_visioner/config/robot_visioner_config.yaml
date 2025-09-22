@@ -1,5 +1,12 @@
+# config/robot_visioner.yaml
 robot_visioner:
   ros__parameters:
+    # 位置偏移参数 (单位: 米) - 用于精确抓取补偿
+    position_offset_x: -0.03      # X方向偏移 (前后)
+    position_offset_y: -0.03      # Y方向偏移 (左右)  
+    position_offset_z: -0.01      # Z方向偏移 (上下)
+    enable_position_offset: true # 启用位置偏移
+    
     # 话题配置（支持彩色点云）
     rgb_topic: "/camera/color/image_raw"            # RGB图像话题
     depth_topic: "/camera/depth/image_raw"          # 深度图像话题
