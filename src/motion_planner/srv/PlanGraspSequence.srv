@@ -1,0 +1,15 @@
+# 抓取序列规划服务
+geometry_msgs/Pose target_pose          # 目标抓取位置
+float64 approach_distance               # 接近距离 (m)
+float64 retreat_distance                # 后退距离 (m)
+float64 eef_step                        # 末端执行器步长 (m)
+float64 jump_threshold                  # 跳跃阈值
+int32 max_trajectory_points             # 最大轨迹点数
+bool use_cartesian_path                 # 是否使用笛卡尔路径
+---
+bool success                            # 规划是否成功
+string message                          # 结果消息
+trajectory_msgs/JointTrajectory approach_trajectory   # 接近轨迹
+trajectory_msgs/JointTrajectory grasp_trajectory      # 抓取轨迹
+trajectory_msgs/JointTrajectory retreat_trajectory    # 后退轨迹
+int32 total_points                      # 总轨迹点数

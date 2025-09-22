@@ -3,5 +3,5 @@ from moveit_configs_utils.launches import generate_static_virtual_joint_tfs_laun
 
 
 def generate_launch_description():
-    moveit_config = MoveItConfigsBuilder("seed_robot", package_name="sr_moveit2").to_moveit_configs()
+    moveit_config = MoveItConfigsBuilder("seed_robot", package_name="seed_robot_moveit_config").to_moveit_configs()
     return generate_static_virtual_joint_tfs_launch(moveit_config)

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(sr_moveit2)
+project(seed_robot_moveit_config)
 
 find_package(ament_cmake REQUIRED)
 

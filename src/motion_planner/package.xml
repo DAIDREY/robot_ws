@@ -1,32 +1,34 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>robot_task</name>
+  <name>motion_planner</name>
   <version>1.0.0</version>
-  <description>Simple robot task management package for object grasping by name</description>
+  <description>专用运动规划功能包</description>
   <maintainer email="717001558@qq.com">sy</maintainer>
   <license>MIT</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
-  <!-- Core ROS2 dependencies -->
+  <!-- 核心依赖 -->
   <depend>rclcpp</depend>
   <depend>std_msgs</depend>
   <depend>geometry_msgs</depend>
-  <depend>builtin_interfaces</depend>
-  <depend>tf2</depend>
-  <depend>tf2_geometry_msgs</depend>
-  
-  <!-- 添加motion_planner依赖 -->
-  <depend>motion_planner</depend>
   <depend>trajectory_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_srvs</depend>
 
-  <!-- Message generation -->
+  <!-- MoveIt2依赖 -->
+  <depend>moveit_ros_planning_interface</depend>
+  <depend>moveit_ros_planning</depend>
+  <depend>moveit_msgs</depend>
+  <depend>moveit_core</depend>
+
+  <!-- 消息生成 -->
   <build_depend>rosidl_default_generators</build_depend>
   <exec_depend>rosidl_default_runtime</exec_depend>
   <member_of_group>rosidl_interface_packages</member_of_group>
 
-  <!-- Test dependencies -->
+  <!-- 测试依赖 -->
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
 

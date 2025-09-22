@@ -1,0 +1,10 @@
+float64[] target_joint_positions        # 目标关节角度 (弧度)
+float64 velocity_scaling_factor         # 速度缩放因子 (0.0-1.0)
+float64 acceleration_scaling_factor     # 加速度缩放因子 (0.0-1.0)
+float64 planning_time                   # 规划时间限制 (秒)
+int32 max_trajectory_points             # 最大轨迹点数
+---
+bool success                            # 规划是否成功
+string message                          # 结果消息
+trajectory_msgs/JointTrajectory trajectory  # 关节轨迹
+int32 num_points                        # 轨迹点数

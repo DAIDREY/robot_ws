@@ -14,6 +14,9 @@ find_package(builtin_interfaces REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
+find_package(std_srvs REQUIRED)
+find_package(motion_planner REQUIRED)
+find_package(trajectory_msgs REQUIRED)
 
 # 生成消息和服务
 rosidl_generate_interfaces(${PROJECT_NAME}
@@ -26,13 +29,16 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 # 包含头文件目录
 include_directories(include)
 
-# 依赖项列表
+# 依赖项列表（添加新依赖）
 set(dependencies
   rclcpp
   std_msgs
   geometry_msgs
   tf2
   tf2_geometry_msgs
+  motion_planner
+  trajectory_msgs
+  std_srvs
 )
 
 # 创建可执行文件

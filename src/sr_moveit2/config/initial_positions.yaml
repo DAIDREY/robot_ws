@@ -1,9 +1,0 @@
-# Default initial positions for seed_robot's ros2_control fake system
-
-initial_positions:
-  joint1: -0.861494518784401
-  joint2: -0.09005898940290741
-  joint3: 1.6990780268164798
-  joint4: 0.022689280275926284
-  joint5: 1.077566280181299
-  joint6: -0.0005235987755982988
