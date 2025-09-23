@@ -1,13 +1,13 @@
 ```bash
 conda deactivate
 source install/setup.bash
-ros2 launch orbbec_camera gemini_330_series.launch.py   color_width:=1280   color_height:=720   color_info_url:=file:///home/ubuntu/robot_ws/src/OrbbecSDK_ROS2/orbbec_camera/config/camera_calibration.yaml
+ros2 launch orbbec_camera gemini_330_series.launch.py
 ```
 
 ```bash
 conda deactivate
 source install/setup.bash
-ros2 launch robot_visioner robot_visioner.launch.py
+ros2 launch robot_description display.launch.py
 ```
 
 ```bash
@@ -19,7 +19,7 @@ ros2 launch robot_task robot_task.launch.py
 ```bash
 conda deactivate
 source install/setup.bash
-ros2 launch robot_description display.launch.py
+ros2 launch robot_visioner robot_visioner.launch.py
 ```
 
 ```bash
